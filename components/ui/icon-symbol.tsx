@@ -31,11 +31,12 @@ export function IconSymbol({
   color,
   style,
 }: {
-  name: IconSymbolName;
+  name: IconSymbolName | (string & {});
   size?: number;
   color: string | OpaqueColorValue;
   style?: StyleProp<TextStyle>;
   weight?: SymbolWeight;
 }) {
-  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
+  const mappedName = MAPPING[name as IconSymbolName] || name;
+  return <MaterialIcons color={color} size={size} name={mappedName as any} style={style} />;
 }
