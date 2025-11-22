@@ -32,6 +32,8 @@ yarn-error.*
 
 # local env files
 .env*.local
+# Keep .env file (uncomment if you want to ignore .env)
+# .env
 
 # typescript
 *.tsbuildinfo
@@ -41,3 +43,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md

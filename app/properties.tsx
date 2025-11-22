@@ -104,15 +104,13 @@ export default function PropertiesScreen() {
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Top App Bar */}
       <View style={[styles.topBar, { borderBottomColor: borderColor, paddingTop: insets.top }]}>
-        <TouchableOpacity style={styles.iconButton}>
-          <MaterialCommunityIcons name="menu" size={24} color={textColor} />
+        <TouchableOpacity style={styles.iconButton} onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
         <ThemedText type="subtitle" style={[styles.headerTitle, { color: textColor }]}>
           My Properties
         </ThemedText>
-        <TouchableOpacity style={styles.iconButton}>
-          <MaterialCommunityIcons name="bell" size={24} color={textColor} />
-        </TouchableOpacity>
+        <View style={styles.iconButton} />
       </View>
 
       {/* Search Bar */}

@@ -1,8 +1,9 @@
-import React from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, Image } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -15,19 +16,43 @@ interface QuickAccessItem {
   route: string;
 }
 
-const QUICK_ACCESS_ITEMS: QuickAccessItem[] = [
-  { id: '1', title: 'Properties', icon: 'home-city', route: '/(tabs)/properties' },
-  { id: '2', title: 'Tenants', icon: 'account-multiple', route: '/(tabs)/tenants' },
-  { id: '3', title: 'Leases', icon: 'file-document', route: '/(tabs)/properties' },
-  { id: '4', title: 'Accounting', icon: 'receipt', route: '/(tabs)/accounting' },
-  { id: '5', title: 'Maintenance', icon: 'wrench', route: '/(tabs)/maintenance' },
-  { id: '6', title: 'Reports', icon: 'chart-line', route: '/(tabs)/properties' },
+type UserRole = 'landlord' | 'manager' | 'tenant' | null;
+
+const LANDLORD_MANAGER_ITEMS: QuickAccessItem[] = [
+  { id: '1', title: 'My Properties', icon: 'home-city', route: '/(tabs)/properties' },
+  { id: '2', title: 'My Tenants', icon: 'account-multiple', route: '/(tabs)/tenants' },
+  { id: '3', title: 'Maintenance', icon: 'wrench', route: '/(tabs)/maintenance' },
+  { id: '4', title: 'Leases', icon: 'file-document', route: '/(tabs)/properties' },
+];
+
+const TENANT_ITEMS: QuickAccessItem[] = [
+  { id: '1', title: 'Maintenance', icon: 'wrench', route: '/(tabs)/maintenance' },
+  { id: '2', title: 'My Property', icon: 'home', route: '/(tabs)/dashboard' },
+  { id: '3', title: 'Lease', icon: 'file-document', route: '/(tabs)/dashboard' },
 ];
 
 export default function DashboardScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const getUserRole = async () => {
+      try {
+        const role = await AsyncStorage.getItem('userRole');
+        setUserRole((role as UserRole) || 'tenant');
+      } catch (error) {
+        console.error('Failed to get user role:', error);
+        setUserRole('tenant');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    getUserRole();
+  }, []);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#18181b' : '#f8fafc';
@@ -36,6 +61,9 @@ export default function DashboardScreen() {
   const textColor = isDark ? '#fafafa' : '#0f172a';
   const secondaryTextColor = isDark ? '#a1a1aa' : '#64748b';
   const primaryColor = '#3B82F6';
+
+  const isLandlordOrManager = userRole === 'landlord' || userRole === 'manager';
+  const quickAccessItems = isLandlordOrManager ? LANDLORD_MANAGER_ITEMS : TENANT_ITEMS;
 
   const QuickAccessCard = ({ item }: { item: QuickAccessItem }) => (
     <TouchableOpacity
@@ -47,6 +75,11 @@ export default function DashboardScreen() {
       </ThemedText>
     </TouchableOpacity>
   );
+
+  if (loading) {
+    return <ThemedView style={[styles.container, { backgroundColor: bgColor }]} />;
+  }
+
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -127,7 +160,7 @@ export default function DashboardScreen() {
 
         {/* Quick Access Grid */}
         <View style={styles.quickAccessGrid}>
-          {QUICK_ACCESS_ITEMS.map((item) => (
+          {quickAccessItems.map((item) => (
             <QuickAccessCard key={item.id} item={item} />
           ))}
         </View>
