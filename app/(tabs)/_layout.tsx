@@ -1,13 +1,40 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Tabs } from 'expo-router';
-import React from 'react';
+import { useEffect, useState } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+type UserRole = 'landlord' | 'manager' | 'tenant' | null;
+
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const [userRole, setUserRole] = useState<UserRole>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const getUserRole = async () => {
+      try {
+        const role = await AsyncStorage.getItem('userRole');
+        setUserRole((role as UserRole) || 'tenant'); // default to tenant
+      } catch (error) {
+        console.error('Failed to get user role:', error);
+        setUserRole('tenant');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    getUserRole();
+  }, []);
+
+  if (loading) {
+    return null;
+  }
+
+  const isLandlordOrManager = userRole === 'landlord' || userRole === 'manager' ? true : false;
 
   return (
     <Tabs
@@ -16,55 +43,80 @@ export default function TabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
       }}>
+      {/* Tab 1: Dashboard - Role based (changes based on user type) */}
+      {isLandlordOrManager ? (
+        <Tabs.Screen
+          name="landlord-dashboard"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          }}
+        />
+      ) : (
+        <Tabs.Screen
+          name="tenant-dashboard"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          }}
+        />
+      )}
+
+      {/* Tab 2: Messages (for all users) */}
       <Tabs.Screen
-        name="dashboard"
+        name="messages"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          title: 'Messages',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="message.fill" color={color} />,
         }}
       />
+
+      {/* Tab 3: Notifications (for all users) */}
       <Tabs.Screen
-        name="properties"
+        name="alerts"
         options={{
-          title: 'Properties',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="building.2.fill" color={color} />,
+          title: 'Notifications',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bell.fill" color={color} />,
         }}
       />
+
+      {/* Tab 4: Settings (for all users) */}
       <Tabs.Screen
-        name="tenants"
+        name="settings"
         options={{
-          title: 'Tenants',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.2.fill" color={color} />,
+          title: 'Settings',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="gear" color={color} />,
         }}
       />
+
+      {/* Hide unused dashboard from tabs */}
+      {isLandlordOrManager && (
+        <Tabs.Screen
+          name="tenant-dashboard"
+          options={{
+            href: null, // Hide from tabs
+          }}
+        />
+      )}
+      {!isLandlordOrManager && (
+        <Tabs.Screen
+          name="landlord-dashboard"
+          options={{
+            href: null, // Hide from tabs
+          }}
+        />
+      )}
+
+      {/* Hide maintenance from tabs (only accessible via navigation) */}
       <Tabs.Screen
         name="maintenance"
         options={{
-          title: 'Maintenance',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="wrench.fill" color={color} />,
+          href: null, // Hide from tabs
         }}
       />
-      <Tabs.Screen
-        name="applicants"
-        options={{
-          title: 'Applicants',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.crop.circle.badge.plus" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="accounting"
-        options={{
-          title: 'Accounting',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="doc.plaintext.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
-      />
+
+      {/* Hidden screens - not shown in tabs */}
+    
     </Tabs>
   );
 }

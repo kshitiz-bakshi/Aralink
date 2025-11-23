@@ -6,7 +6,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  anchor: 'splash', // Start with splash
 };
 
 export default function RootLayout() {
@@ -14,16 +14,23 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="alerts" options={{ presentation: 'card', headerShown: false }} />
-        <Stack.Screen name="property-detail" options={{ presentation: 'modal', title: 'Property Details' }} />
-        <Stack.Screen name="tenant-detail" options={{ presentation: 'modal', title: 'Tenant Details' }} />
-        <Stack.Screen name="maintenance-detail" options={{ presentation: 'modal', title: 'Maintenance Ticket' }} />
-        <Stack.Screen name="applicant-detail" options={{ presentation: 'modal', title: 'Applicant Details' }} />
-        <Stack.Screen name="invoice-detail" options={{ presentation: 'modal', title: 'Invoice Details' }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="splash" />
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="properties" />
+        <Stack.Screen name="tenants" />
+        <Stack.Screen name="leases" />
+        <Stack.Screen name="accounting" />
+        <Stack.Screen name="maintenance" />
+        <Stack.Screen name="applicants" />
+        <Stack.Screen name="profile" />
+        <Stack.Screen name="alerts" />
+        <Stack.Screen name="property-detail" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="tenant-detail" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="maintenance-detail" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="applicant-detail" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="invoice-detail" options={{ presentation: 'modal' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
