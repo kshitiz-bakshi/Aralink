@@ -54,7 +54,7 @@ export default function TenantDashboardScreen() {
     },
     {
       id: '2',
-      icon: 'bug_report',
+      icon: 'bug',
       title: 'Pest Control Notice',
       description:
         'Quarterly pest control service is scheduled for all units next Monday. Please prepare accordingly.',
@@ -63,9 +63,9 @@ export default function TenantDashboardScreen() {
   ];
 
   const quickLinks: QuickLink[] = [
-    { id: '1', icon: 'description', label: 'View Lease', route: '/(tabs)/documents' },
-    { id: '2', icon: 'support_agent', label: 'Contact Us', route: '/(tabs)/messages' },
-    { id: '3', icon: 'folder_open', label: 'Documents', route: '/(tabs)/documents' },
+    { id: '1', icon: 'file-document-outline', label: 'View Lease', route: '/(tabs)/documents' },
+    { id: '2', icon: 'account-supervisor', label: 'Contact Us', route: '/(tabs)/messages' },
+    { id: '3', icon: 'folder-open', label: 'Documents', route: '/(tabs)/documents' },
     { id: '4', icon: 'gavel', label: 'Community Rules', route: '/(tabs)/explore' },
   ];
 
@@ -222,10 +222,22 @@ export default function TenantDashboardScreen() {
           </View>
         </View>
 
+        {/* Lease Application Button */}
+        <TouchableOpacity
+          style={[styles.maintenanceButton, { backgroundColor: primaryColor, marginBottom: 12 }]}
+          onPress={() => router.push('/tenant-lease-start')}>
+          <View style={styles.maintenanceButtonIcon}>
+            <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
+          </View>
+          <ThemedText style={styles.maintenanceButtonText}>
+            Apply for a Lease
+          </ThemedText>
+        </TouchableOpacity>
+
         {/* Maintenance Request Button */}
         <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor }]}
-          onPress={() => router.push('/(tabs)/maintenance')}>
+          onPress={() => router.push('/maintenance')}>
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="plus" size={20} color="#fff" />
           </View>

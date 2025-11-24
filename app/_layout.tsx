@@ -31,6 +31,25 @@ export default function RootLayout() {
         <Stack.Screen name="maintenance-detail" options={{ presentation: 'modal' }} />
         <Stack.Screen name="applicant-detail" options={{ presentation: 'modal' }} />
         <Stack.Screen name="invoice-detail" options={{ presentation: 'modal' }} />
+        
+        {/* Lease Application Routes */}
+        <Stack.Screen name="tenant-lease-start" />
+        <Stack.Screen name="tenant-lease-step1" />
+        <Stack.Screen name="tenant-lease-step2" />
+        <Stack.Screen name="tenant-lease-step3" />
+        <Stack.Screen name="tenant-lease-step4" />
+        <Stack.Screen name="tenant-lease-step5" />
+        <Stack.Screen name="tenant-lease-step6" />
+        <Stack.Screen name="tenant-lease-submitted" />
+        <Stack.Screen name="tenant-lease-status" />
+        <Stack.Screen name="tenant-lease-review-sign" />
+        
+        {/* Landlord Lease Routes */}
+        <Stack.Screen name="landlord-applications" />
+        <Stack.Screen name="landlord-application-review" />
+        <Stack.Screen name="finalize-lease-terms" />
+        <Stack.Screen name="lease-preview" />
+        <Stack.Screen name="lease-sent" />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

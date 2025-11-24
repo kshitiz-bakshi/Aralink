@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, Switch } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, View, Switch, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -105,6 +106,35 @@ export default function SettingsScreen() {
     },
   ];
 
+  const handleLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Clear all stored data
+              await AsyncStorage.multiRemove(['userRole', 'userToken', 'userEmail']);
+              // Navigate to login screen
+              router.replace('/(auth)/login');
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to log out. Please try again.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const SettingSection = ({ title, items }: { title: string; items: SettingItem[] }) => (
     <View style={styles.section}>
       <ThemedText style={[styles.sectionTitle, { color: textSecondaryColor }]}>{title}</ThemedText>
@@ -168,7 +198,7 @@ export default function SettingsScreen() {
           {/* Logout Button */}
           <View style={styles.logoutSection}>
             <View style={[styles.card, { backgroundColor: cardBgColor }]}>
-              <TouchableOpacity style={styles.logoutButton}>
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                 <ThemedText style={[styles.logoutText, { color: dangerColor }]}>Log Out</ThemedText>
               </TouchableOpacity>
             </View>
