@@ -1,0 +1,216 @@
+import React, { useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import { useMaintenanceStore } from '@/store/maintenanceStore';
+import { StatusChip } from '@/components/maintenance/StatusChip';
+import { VendorList, Vendor } from '@/components/maintenance/VendorList';
+
+const vendorOptions: Vendor[] = [
+  { id: 'vendor-1', name: 'FlowPro Plumbing', specialty: 'Plumbing', rating: 4.9, eta: '2-4 hrs' },
+  { id: 'vendor-2', name: 'BrightSpark Electric', specialty: 'Electrical', rating: 4.7, eta: 'Same day' },
+  { id: 'vendor-3', name: 'ClimateCare HVAC', specialty: 'HVAC', rating: 4.8, eta: 'Next business day' },
+];
+
+const statusActions = [
+  { label: 'Under Review', value: 'under_review' },
+  { label: 'In Progress', value: 'in_progress' },
+  { label: 'Waiting Vendor', value: 'waiting_vendor' },
+  { label: 'Resolved', value: 'resolved' },
+  { label: 'Cancelled', value: 'cancelled' },
+];
+
+export default function LandlordMaintenanceRequestDetailsScreen() {
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { requests, updateRequestStatus, assignVendor, addResolutionNotes } = useMaintenanceStore();
+  const request = useMemo(() => requests.find((req) => req.id === id) ?? requests[0], [requests, id]);
+
+  const [notes, setNotes] = useState(request.resolutionNotes ?? '');
+  const [selectedVendor, setSelectedVendor] = useState<string | undefined>(request.vendor);
+  const [saving, setSaving] = useState(false);
+
+  const handleStatusChange = (status: string) => {
+    updateRequestStatus(request.id, status as any);
+    Alert.alert('Updated', `Status changed to ${status.replace('_', ' ')}.`);
+  };
+
+  const handleAssignVendor = (vendorId: string) => {
+    setSelectedVendor(vendorId);
+    const vendor = vendorOptions.find((v) => v.id === vendorId);
+    if (vendor) {
+      assignVendor(request.id, vendor.name);
+    }
+  };
+
+  const handleSaveNotes = () => {
+    setSaving(true);
+    addResolutionNotes(request.id, notes);
+    setSaving(false);
+    Alert.alert('Notes Saved', 'Resolution notes updated.');
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#0f172a" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Request Details</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>{request.title}</Text>
+              <Text style={styles.subtitle}>
+                {request.property} • {request.unit}
+              </Text>
+              <Text style={styles.tenant}>Tenant: {request.tenantName}</Text>
+            </View>
+            <StatusChip status={request.status} />
+          </View>
+          <Text style={styles.description}>{request.description}</Text>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Manage Status</Text>
+          <View style={styles.statusGrid}>
+            {statusActions.map((action) => {
+              const active = request.status === action.value;
+              return (
+                <TouchableOpacity
+                  key={action.value}
+                  style={[styles.statusButton, active && styles.statusButtonActive]}
+                  onPress={() => handleStatusChange(action.value)}>
+                  <Text style={[styles.statusText, active && { color: '#fff' }]}>{action.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Assign Vendor</Text>
+          <VendorList vendors={vendorOptions} selectedVendor={selectedVendor} onSelect={handleAssignVendor} />
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Resolution Notes</Text>
+          <TextInput
+            style={styles.notesInput}
+            placeholder="Add notes about the repair, parts ordered, follow-up etc."
+            multiline
+            value={notes}
+            onChangeText={setNotes}
+          />
+          <TouchableOpacity style={styles.saveButton} onPress={handleSaveNotes} disabled={saving}>
+            <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save Notes'}</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  content: {
+    padding: 16,
+    gap: 12,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 16,
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  subtitle: {
+    color: '#475569',
+    fontWeight: '600',
+  },
+  tenant: {
+    color: '#64748b',
+    fontSize: 13,
+  },
+  description: {
+    color: '#475569',
+    fontSize: 14,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  statusGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  statusButton: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  statusButtonActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  statusText: {
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  notesInput: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 12,
+    minHeight: 120,
+    textAlignVertical: 'top',
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  saveButton: {
+    backgroundColor: '#16a34a',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  saveText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+});
+

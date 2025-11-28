@@ -229,21 +229,26 @@ export default function TenantDashboardScreen() {
           <View style={styles.maintenanceButtonIcon}>
             <MaterialCommunityIcons name="file-document-outline" size={20} color="#fff" />
           </View>
-          <ThemedText style={styles.maintenanceButtonText}>
-            Apply for a Lease
-          </ThemedText>
+          <ThemedText style={styles.maintenanceButtonText}>Apply for a Lease</ThemedText>
         </TouchableOpacity>
 
         {/* Maintenance Request Button */}
         <TouchableOpacity
           style={[styles.maintenanceButton, { backgroundColor: primaryColor }]}
-          onPress={() => router.push('/maintenance')}>
+          onPress={() => router.push('/tenant-maintenance-request')}>
           <View style={styles.maintenanceButtonIcon}>
-            <MaterialCommunityIcons name="plus" size={20} color="#fff" />
+            <MaterialCommunityIcons name="wrench" size={20} color="#fff" />
           </View>
-          <ThemedText style={styles.maintenanceButtonText}>
-            Submit Maintenance Request
-          </ThemedText>
+          <ThemedText style={styles.maintenanceButtonText}>Submit Maintenance Request</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.maintenanceButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: primaryColor }]}
+          onPress={() => router.push('/tenant-maintenance-status')}>
+          <View style={[styles.maintenanceButtonIcon, { backgroundColor: primaryColor + '20' }]}>
+            <MaterialCommunityIcons name="clipboard-text" size={20} color={primaryColor} />
+          </View>
+          <ThemedText style={[styles.maintenanceButtonText, { color: primaryColor }]}>View My Requests</ThemedText>
         </TouchableOpacity>
 
         {/* Quick Links */}
