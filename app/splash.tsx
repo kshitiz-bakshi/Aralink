@@ -38,13 +38,13 @@ export default function SplashRoute() {
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>
-      <LottieView
+      {/* <LottieView
         source={require('@/assets/animations/splash.json')}
         autoPlay
         loop={false}
         style={styles.animation}
         resizeMode="contain"
-      />
+      /> */}
     </View>
   );
 }

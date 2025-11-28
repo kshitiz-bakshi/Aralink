@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, Switch } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, View, Switch, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -26,43 +27,28 @@ export default function SettingsScreen() {
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
 
   const isDark = colorScheme === 'dark';
-  const bgColor = isDark ? '#000000' : '#f2f2f7';
-  const cardBgColor = isDark ? '#1c1c1e' : '#ffffff';
-  const textPrimaryColor = isDark ? '#ffffff' : '#000000';
-  const textSecondaryColor = isDark ? '#8e8e93' : '#6b6b70';
-  const borderColor = isDark ? '#38383a' : '#e5e5ea';
-  const primaryColor = '#005A9C';
-  const dangerColor = '#ff3b30';
+  const bgColor = isDark ? '#101922' : '#F4F6F8';
+  const cardBgColor = isDark ? '#192734' : '#ffffff';
+  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
+  const textSecondaryColor = isDark ? '#8A8A8F' : '#8A8A8F';
+  const borderColor = isDark ? '#394a57' : '#E5E7EB';
+  const primaryColor = '#2A64F5';
+  const dangerColor = '#FF3B30';
 
   const accountItems: SettingItem[] = [
     {
       icon: 'account',
-      iconBg: '#007aff',
+      iconBg: primaryColor,
       label: 'Profile Information',
       onPress: () => router.push('/profile'),
     },
     {
       icon: 'key',
-      iconBg: '#8e8e93',
+      iconBg: textSecondaryColor,
       label: 'Change Password',
-    },
-    {
-      icon: 'credit-card',
-      iconBg: '#ff3b30',
-      label: 'Manage Subscription',
-    },
-  ];
-
-  const notificationItems: SettingItem[] = [
-    {
-      icon: 'bell',
-      iconBg: '#ff9500',
-      label: 'Push Notifications',
-    },
-    {
-      icon: 'email-outline',
-      iconBg: '#007aff',
-      label: 'Email Notifications',
+      onPress: () => {
+        Alert.alert('Coming Soon', 'Password change feature will be available soon.');
+      },
     },
   ];
 
@@ -75,35 +61,36 @@ export default function SettingsScreen() {
       toggleValue: twoFactorEnabled,
       onToggleChange: setTwoFactorEnabled,
     },
-    {
-      icon: 'file-document-outline',
-      iconBg: '#5856d6',
-      label: 'Privacy Policy',
-    },
   ];
 
-  const appPreferenceItems: SettingItem[] = [
-    {
-      icon: 'theme-light-dark',
-      iconBg: '#8e8e93',
-      label: 'Appearance',
-    },
-    {
-      icon: 'web',
-      iconBg: '#007aff',
-      label: 'Language',
-    },
-    {
-      icon: 'help-circle-outline',
-      iconBg: '#007aff',
-      label: 'Help & Support',
-    },
-    {
-      icon: 'information-outline',
-      iconBg: '#007aff',
-      label: 'About',
-    },
-  ];
+  const handleLogout = () => {
+    Alert.alert(
+      'Log Out',
+      'Are you sure you want to log out?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Clear all stored data
+              await AsyncStorage.multiRemove(['userRole', 'userToken', 'userEmail']);
+              // Navigate to login screen
+              router.replace('/(auth)/login');
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to log out. Please try again.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
 
   const SettingSection = ({ title, items }: { title: string; items: SettingItem[] }) => (
     <View style={styles.section}>
@@ -150,25 +137,23 @@ export default function SettingsScreen() {
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <MaterialCommunityIcons name="chevron-left" size={28} color={primaryColor} />
+          <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
         </TouchableOpacity>
         <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Settings</ThemedText>
-        <View style={{ width: 48 }} />
+        <View style={{ width: 24 }} />
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.contentInner}>
           <SettingSection title="Account" items={accountItems} />
-          <SettingSection title="Notifications" items={notificationItems} />
-          <SettingSection title="Security & Privacy" items={securityItems} />
-          <SettingSection title="App Preferences" items={appPreferenceItems} />
+          <SettingSection title="Security" items={securityItems} />
 
           {/* Logout Button */}
           <View style={styles.logoutSection}>
             <View style={[styles.card, { backgroundColor: cardBgColor }]}>
-              <TouchableOpacity style={styles.logoutButton}>
+              <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
                 <ThemedText style={[styles.logoutText, { color: dangerColor }]}>Log Out</ThemedText>
               </TouchableOpacity>
             </View>
@@ -191,12 +176,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    height: 56,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
   },
   backButton: {
-    width: 48,
-    marginLeft: -8,
+    width: 24,
   },
   headerTitle: {
     fontSize: 18,

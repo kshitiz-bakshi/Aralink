@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Tabs } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -35,6 +36,8 @@ export default function TabLayout() {
   }
 
   const isLandlordOrManager = userRole === 'landlord' || userRole === 'manager' ? true : false;
+  const isWeb = Platform.OS === 'web';
+  const borderColor = colorScheme === 'dark' ? '#394a57' : '#E5E7EB';
 
   return (
     <Tabs
@@ -42,6 +45,15 @@ export default function TabLayout() {
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        ...(isWeb && {
+          tabBarStyle: {
+            borderTopWidth: 0,
+            borderBottomWidth: 1,
+            borderBottomColor: borderColor,
+            height: 60,
+            position: 'relative',
+          },
+        }),
       }}>
       {/* Tab 1: Dashboard - Role based (changes based on user type) */}
       {isLandlordOrManager ? (

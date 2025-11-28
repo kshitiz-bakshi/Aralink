@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -10,7 +12,13 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 export default function PropertyDetailScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams();
+  
+  const isDark = colorScheme === 'dark';
+  const bgColor = isDark ? '#101922' : '#F4F6F8';
+  const textPrimaryColor = isDark ? '#F4F6F8' : '#1D1D1F';
+  const borderColor = isDark ? '#394a57' : '#E5E7EB';
 
   const [formData, setFormData] = useState({
     address: '',
@@ -26,9 +34,15 @@ export default function PropertyDetailScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color={textPrimaryColor} />
+        </TouchableOpacity>
+        <ThemedText style={[styles.headerTitle, { color: textPrimaryColor }]}>Property Details</ThemedText>
+        <View style={{ width: 24 }} />
+      </View>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <ThemedText type="title">Property Details</ThemedText>
 
         <ThemedView style={styles.form}>
           <ThemedView style={styles.formGroup}>
@@ -96,6 +110,20 @@ export default function PropertyDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
   },
   scrollContent: {
     padding: 16,

@@ -78,7 +78,7 @@ export default function LandlordDashboardScreen() {
   const activities: Activity[] = [
     {
       id: '1',
-      icon: 'cash-check',
+      icon: 'cash-multiple',
       title: 'Rent paid for Unit 5B',
       description: 'John Smith - $1,500',
       time: '1h ago',
@@ -99,8 +99,8 @@ export default function LandlordDashboardScreen() {
     { id: '2', title: 'My Tenants', subtitle: '10 active', icon: 'account-group', route: '/tenants' },
     { id: '3', title: 'Leases', subtitle: 'Manage all', icon: 'gavel', route: '/leases' },
     { id: '4', title: 'Accounting', subtitle: 'Review finances', icon: 'file-document-outline', route: '/accounting' },
-    { id: '5', title: 'Maintenance', subtitle: '2 open requests', icon: 'toolbox', route: '/maintenance' },
-    { id: '6', title: 'New Applicants', subtitle: '4 new', icon: 'file-document', route: '/applicants' },
+    { id: '5', title: 'Maintenance', subtitle: '2 open requests', icon: 'toolbox', route: '/landlord-maintenance-overview' },
+    { id: '6', title: 'New Applicants', subtitle: '4 new', icon: 'file-document', route: '/landlord-applications' },
   ];
 
   const handleAddProperty = () => {
