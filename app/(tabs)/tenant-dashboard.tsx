@@ -1,13 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React from 'react';
 import {
-    FlatList,
-    ListRenderItem,
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  FlatList,
+  ListRenderItem,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -143,11 +142,6 @@ export default function TenantDashboardScreen() {
               <ThemedText style={[styles.greeting, { color: textPrimaryColor }]}>
                 Hello, John
               </ThemedText>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/profile')}>
-            <View style={styles.notificationBadge}>
-              <MaterialCommunityIcons name="account" size={20} color={textPrimaryColor} />
             </View>
           </TouchableOpacity>
         </View>

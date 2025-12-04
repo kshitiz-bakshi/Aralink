@@ -29,6 +29,74 @@ const SUB_UNIT_TYPES: { value: SubUnitType; label: string; icon: string }[] = [
   { value: 'other', label: 'Other', icon: 'door' },
 ];
 
+interface Unit {
+  id: string;
+  unitNumber: string;
+  bedrooms: 'studio' | '1' | '2' | '3';
+  bathrooms: '1' | '1.5' | '2';
+}
+
+interface AddressSuggestion {
+  id: string;
+  description: string;
+  street: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country: string;
+}
+
+interface FormData {
+  propertyType: 'single' | 'multi';
+  numberOfUnits: string;
+  addressInput: string;
+  street: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  country: string;
+  units: Unit[];
+}
+
+const PROPERTY_TYPES = [
+  { label: 'Single Unit Home', value: 'single' },
+  { label: 'Multi-Unit Building', value: 'multi' },
+];
+
+const BEDROOM_OPTIONS = ['Studio', '1', '2', '3'];
+const BATHROOM_OPTIONS = ['1', '1.5', '2'];
+
+// Mock address suggestions for autocomplete
+const MOCK_ADDRESSES: AddressSuggestion[] = [
+  {
+    id: '1',
+    description: '123 Main Street, Toronto, ON M5V 3A8',
+    street: '123 Main Street',
+    city: 'Toronto',
+    province: 'ON',
+    postalCode: 'M5V 3A8',
+    country: 'Canada',
+  },
+  {
+    id: '2',
+    description: '456 Queen Avenue, Vancouver, BC V6B 4N9',
+    street: '456 Queen Avenue',
+    city: 'Vancouver',
+    province: 'BC',
+    postalCode: 'V6B 4N9',
+    country: 'Canada',
+  },
+  {
+    id: '3',
+    description: '789 Park Lane, Montreal, QC H1A 0A1',
+    street: '789 Park Lane',
+    city: 'Montreal',
+    province: 'QC',
+    postalCode: 'H1A 0A1',
+    country: 'Canada',
+  },
+];
+
 export default function PropertyDetailScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
@@ -581,15 +649,64 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  headerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
+    paddingVertical: 16,
   },
   headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+<<<<<<< HEAD
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+  },
+  backButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+=======
+  progressContainer: {
+    marginBottom: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  progressBar: {
+    height: 3,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 1.5,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 1.5,
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  card: {
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  stepContent: {
+    gap: 16,
+  },
+  stepTitle: {
     fontSize: 18,
     fontWeight: '700',
     flex: 1,
@@ -901,6 +1018,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 8,
+    borderWidth: 1.5,
     borderWidth: 1,
   },
   typeOptionText: {
