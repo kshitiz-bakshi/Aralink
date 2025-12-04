@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, Href } from 'expo-router';
+import { Href, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   FlatList,
@@ -179,10 +179,6 @@ export default function LandlordDashboardScreen() {
                 <ThemedText style={[styles.portfolioLabel, { color: textSecondaryColor }]}>PORTFOLIO OVERVIEW</ThemedText>
               </View>
             </View>
-            <TouchableOpacity>
-            <MaterialCommunityIcons name="account-outline" size={24} color={textSecondaryColor} />
-
-            </TouchableOpacity>
           </View>
           <ThemedText style={[styles.statsText, { color: textPrimaryColor }]}>
             {portfolio.activeLeases} Active Leases • {portfolio.occupancyRate}% Occupancy

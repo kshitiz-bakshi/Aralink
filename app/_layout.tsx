@@ -44,7 +44,6 @@ export default function RootLayout() {
         <Stack.Screen name="maintenance" />
         <Stack.Screen name="applicants" />
         <Stack.Screen name="profile" />
-        <Stack.Screen name="alerts" />
         <Stack.Screen name="property-detail" options={{ presentation: 'modal' }} />
         <Stack.Screen name="tenant-detail" options={{ presentation: 'modal' }} />
         <Stack.Screen name="maintenance-detail" options={{ presentation: 'modal' }} />
