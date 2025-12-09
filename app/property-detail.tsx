@@ -1,101 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  View, 
-  Image,
-  Alert,
-  Modal,
-  TextInput,
-  Pressable,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Dimensions,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { usePropertyStore, Property, Unit, SubUnit } from '@/store/propertyStore';
+import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
 
-type SubUnitType = 'bedroom' | 'bathroom' | 'living_room' | 'kitchen' | 'other';
-
-const SUB_UNIT_TYPES: { value: SubUnitType; label: string; icon: string }[] = [
-  { value: 'bedroom', label: 'Bedroom', icon: 'bed-outline' },
-  { value: 'bathroom', label: 'Bathroom', icon: 'shower' },
-  { value: 'living_room', label: 'Living Room', icon: 'sofa-outline' },
-  { value: 'kitchen', label: 'Kitchen', icon: 'stove' },
-  { value: 'other', label: 'Other', icon: 'door' },
-];
-
-interface Unit {
-  id: string;
-  unitNumber: string;
-  bedrooms: 'studio' | '1' | '2' | '3';
-  bathrooms: '1' | '1.5' | '2';
-}
-
-interface AddressSuggestion {
-  id: string;
-  description: string;
-  street: string;
-  city: string;
-  province: string;
-  postalCode: string;
-  country: string;
-}
-
-interface FormData {
-  propertyType: 'single' | 'multi';
-  numberOfUnits: string;
-  addressInput: string;
-  street: string;
-  city: string;
-  province: string;
-  postalCode: string;
-  country: string;
-  units: Unit[];
-}
-
-const PROPERTY_TYPES = [
-  { label: 'Single Unit Home', value: 'single' },
-  { label: 'Multi-Unit Building', value: 'multi' },
-];
-
-const BEDROOM_OPTIONS = ['Studio', '1', '2', '3'];
-const BATHROOM_OPTIONS = ['1', '1.5', '2'];
-
-// Mock address suggestions for autocomplete
-const MOCK_ADDRESSES: AddressSuggestion[] = [
-  {
-    id: '1',
-    description: '123 Main Street, Toronto, ON M5V 3A8',
-    street: '123 Main Street',
-    city: 'Toronto',
-    province: 'ON',
-    postalCode: 'M5V 3A8',
-    country: 'Canada',
-  },
-  {
-    id: '2',
-    description: '456 Queen Avenue, Vancouver, BC V6B 4N9',
-    street: '456 Queen Avenue',
-    city: 'Vancouver',
-    province: 'BC',
-    postalCode: 'V6B 4N9',
-    country: 'Canada',
-  },
-  {
-    id: '3',
-    description: '789 Park Lane, Montreal, QC H1A 0A1',
-    street: '789 Park Lane',
-    city: 'Montreal',
-    province: 'QC',
-    postalCode: 'H1A 0A1',
-    country: 'Canada',
-  },
-];
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function PropertyDetailScreen() {
   const colorScheme = useColorScheme();
@@ -108,44 +33,36 @@ export default function PropertyDetailScreen() {
     updateProperty, 
     deleteProperty,
     addUnit, 
-    updateUnit, 
     deleteUnit,
-    addSubUnit,
-    deleteSubUnit,
+    addRoomToSingleUnit,
   } = usePropertyStore();
 
   const [property, setProperty] = useState<Property | null>(null);
-  const [showAddUnitModal, setShowAddUnitModal] = useState(false);
-  const [showAddSubUnitModal, setShowAddSubUnitModal] = useState(false);
-  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
-  const [newUnitName, setNewUnitName] = useState('');
-  const [newSubUnitName, setNewSubUnitName] = useState('');
-  const [newSubUnitType, setNewSubUnitType] = useState<SubUnitType>('bedroom');
-  const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
+  const [showUnitModal, setShowUnitModal] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const imageScrollRef = useRef<FlatList>(null);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
-  const cardBgColor = isDark ? '#1f2937' : '#ffffff';
+  const cardBgColor = isDark ? '#1A2831' : '#ffffff';
   const borderColor = isDark ? '#374151' : '#e5e7eb';
-  const textColor = isDark ? '#f3f4f6' : '#1f2937';
+  const textColor = isDark ? '#f3f4f6' : '#0d141b';
   const secondaryTextColor = isDark ? '#9ca3af' : '#6b7280';
+  const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
   const primaryColor = '#137fec';
-  const successColor = '#10b981';
-  const dangerColor = '#ef4444';
-  const warningColor = '#f59e0b';
 
   useEffect(() => {
     if (id) {
       const fetchedProperty = getPropertyById(id);
       if (fetchedProperty) {
         setProperty(fetchedProperty);
-        // Expand all units by default
-        setExpandedUnits(new Set(fetchedProperty.units.map(u => u.id)));
       }
     }
   }, [id, getPropertyById]);
 
-  // Refresh property data
   const refreshProperty = () => {
     if (id) {
       const updated = getPropertyById(id);
@@ -153,87 +70,10 @@ export default function PropertyDetailScreen() {
     }
   };
 
-  const toggleUnitExpanded = (unitId: string) => {
-    setExpandedUnits(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(unitId)) {
-        newSet.delete(unitId);
-      } else {
-        newSet.add(unitId);
-      }
-      return newSet;
-    });
-  };
-
-  const handleAddUnit = () => {
-    if (!newUnitName.trim()) {
-      Alert.alert('Error', 'Please enter a unit name');
-      return;
-    }
-    if (!property) return;
-
-    addUnit(property.id, { name: newUnitName.trim() });
-    setNewUnitName('');
-    setShowAddUnitModal(false);
-    refreshProperty();
-  };
-
-  const handleDeleteUnit = (unitId: string) => {
-    if (!property) return;
-    
-    Alert.alert(
-      'Delete Unit',
-      'Are you sure you want to delete this unit? This will also delete all rooms within it.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteUnit(property.id, unitId);
-            refreshProperty();
-          },
-        },
-      ]
-    );
-  };
-
-  const handleAddSubUnit = () => {
-    if (!newSubUnitName.trim()) {
-      Alert.alert('Error', 'Please enter a room name');
-      return;
-    }
-    if (!property || !selectedUnitId) return;
-
-    addSubUnit(property.id, selectedUnitId, { 
-      name: newSubUnitName.trim(), 
-      type: newSubUnitType 
-    });
-    setNewSubUnitName('');
-    setNewSubUnitType('bedroom');
-    setShowAddSubUnitModal(false);
-    setSelectedUnitId(null);
-    refreshProperty();
-  };
-
-  const handleDeleteSubUnit = (unitId: string, subUnitId: string) => {
-    if (!property) return;
-    
-    Alert.alert(
-      'Delete Room',
-      'Are you sure you want to delete this room?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            deleteSubUnit(property.id, unitId, subUnitId);
-            refreshProperty();
-          },
-        },
-      ]
-    );
+  const handleImageScroll = (event: any) => {
+    const scrollPosition = event.nativeEvent.contentOffset.x;
+    const index = Math.round(scrollPosition / SCREEN_WIDTH);
+    setCurrentImageIndex(index);
   };
 
   const handleDeleteProperty = () => {
@@ -256,13 +96,50 @@ export default function PropertyDetailScreen() {
     );
   };
 
-  const openAddSubUnitModal = (unitId: string) => {
-    setSelectedUnitId(unitId);
-    setShowAddSubUnitModal(true);
+  const handleUpdateProperty = (updates: Partial<Property>) => {
+    if (!property) return;
+    updateProperty(property.id, updates);
+    // Update local state immediately for instant UI feedback
+    setProperty(prev => prev ? { ...prev, ...updates } : null);
+    // Also refresh from store to ensure consistency
+    refreshProperty();
   };
 
-  const getSubUnitIcon = (type: SubUnitType) => {
-    return SUB_UNIT_TYPES.find(t => t.value === type)?.icon || 'door';
+  const handleAddRoom = () => {
+    if (!property) return;
+    
+    if (property.propertyType === 'single_unit') {
+      // For single unit, navigate to add room screen
+      router.push(`/add-room?propertyId=${property.id}`);
+    } else {
+      // For multi-unit, navigate to add unit screen
+      router.push(`/add-unit?propertyId=${property.id}`);
+    }
+  };
+
+  // Refresh when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      refreshProperty();
+    }, [id])
+  );
+
+  const handleRoomPress = (unit: Unit, subUnit: SubUnit) => {
+    // Navigate to room detail or edit screen only in edit mode
+    if (isEditMode) {
+      router.push(`/add-room?propertyId=${property?.id}&unitId=${unit.id}&roomId=${subUnit.id}`);
+    }
+  };
+
+  const handleUnitPress = (unit: Unit) => {
+    // Show unit details in modal
+    setSelectedUnit(unit);
+    setShowUnitModal(true);
+  };
+
+  const handleAddRoomToUnit = (unitId: string) => {
+    setShowUnitModal(false);
+    router.push(`/add-room?propertyId=${property?.id}&unitId=${unitId}`);
   };
 
   if (!property) {
@@ -279,19 +156,19 @@ export default function PropertyDetailScreen() {
           <ThemedText style={[styles.loadingText, { color: secondaryTextColor }]}>
             Property not found
           </ThemedText>
-          <TouchableOpacity 
-            style={[styles.backButton, { backgroundColor: primaryColor }]}
-            onPress={() => router.back()}
-          >
-            <ThemedText style={styles.backButtonText}>Go Back</ThemedText>
-          </TouchableOpacity>
         </View>
       </ThemedView>
     );
   }
 
-  const occupiedUnits = property.units.filter(u => u.isOccupied).length;
-  const totalSubUnits = property.units.reduce((acc, u) => acc + u.subUnits.length, 0);
+  const propertyImages = property.photos && property.photos.length > 0 
+    ? property.photos 
+    : [];
+
+  // Get rooms for single unit property
+  const rooms = property.propertyType === 'single_unit' && property.units.length > 0
+    ? property.units[0].subUnits
+    : [];
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -301,343 +178,438 @@ export default function PropertyDetailScreen() {
           <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
         <ThemedText style={[styles.headerTitle, { color: textColor }]}>Property Details</ThemedText>
-        <TouchableOpacity onPress={handleDeleteProperty}>
-          <MaterialCommunityIcons name="delete-outline" size={24} color={dangerColor} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          {property && property.units.length > 0 && (
+            <TouchableOpacity 
+              onPress={() => setIsEditMode(!isEditMode)}
+              style={[styles.editButton, { backgroundColor: isEditMode ? primaryColor : 'transparent' }]}
+            >
+              <MaterialCommunityIcons 
+                name={isEditMode ? "check" : "pencil"} 
+                size={20} 
+                color={isEditMode ? '#fff' : textColor} 
+              />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={handleDeleteProperty}>
+            <MaterialCommunityIcons name="dots-horizontal" size={24} color={textColor} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView 
+        ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Property Image */}
-        {property.photo ? (
-          <Image source={{ uri: property.photo }} style={styles.propertyImage} />
-        ) : (
-          <View style={[styles.propertyImage, styles.imagePlaceholder, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
-            <MaterialCommunityIcons name="home-outline" size={64} color={secondaryTextColor} />
+        {/* Property Name and Location */}
+        <View style={styles.titleSection}>
+          <ThemedText style={[styles.propertyName, { color: textColor }]}>
+            {property.name || `${property.address1}`}
+          </ThemedText>
+          <View style={styles.locationRow}>
+            <MaterialCommunityIcons name="map-marker-outline" size={16} color={secondaryTextColor} />
+            <ThemedText style={[styles.locationText, { color: secondaryTextColor }]}>
+              {property.city}, {property.state}
+            </ThemedText>
+          </View>
+        </View>
+
+        {/* Image Carousel */}
+        {propertyImages.length > 0 && (
+          <View style={styles.imageContainer}>
+            <FlatList
+              ref={imageScrollRef}
+              data={propertyImages}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={handleImageScroll}
+              keyExtractor={(item, index) => `image-${index}`}
+              renderItem={({ item }) => (
+                <Image source={{ uri: item }} style={styles.propertyImage} />
+              )}
+            />
+            {/* Image Indicators */}
+            {propertyImages.length > 1 && (
+              <View style={styles.imageIndicators}>
+                {propertyImages.map((_, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.indicator,
+                      {
+                        backgroundColor: index === currentImageIndex ? primaryColor : (isDark ? '#475569' : '#cbd5e1'),
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
           </View>
         )}
 
-        {/* Property Info Card */}
-        <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name="map-marker-outline" size={20} color={primaryColor} />
+        {/* Landlord and Address Info */}
+        <View style={[styles.infoSection, { borderBottomColor: borderColor }]}>
+          {property.landlordName && (
+            <View style={styles.infoRow}>
+              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Landlord</ThemedText>
+              <ThemedText style={[styles.infoValue, { color: textColor }]}>{property.landlordName}</ThemedText>
             </View>
-            <ThemedText style={[styles.cardTitle, { color: textColor }]}>Location</ThemedText>
-          </View>
-          
-          <View style={styles.locationInfo}>
-            <ThemedText style={[styles.addressText, { color: textColor }]}>
-              {property.streetAddress}
+          )}
+          <View style={styles.infoRow}>
+            <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Address</ThemedText>
+            <ThemedText style={[styles.infoValue, { color: textColor }]}>
+              {property.address1}
+              {property.address2 ? `, ${property.address2}` : ''}, {property.city}, {property.state} {property.zipCode}
             </ThemedText>
-            <ThemedText style={[styles.cityStateText, { color: secondaryTextColor }]}>
-              {property.city}, {property.state} {property.zipCode}
-            </ThemedText>
-          </View>
-
-          <View style={styles.divider} />
-
-          {/* Property Stats */}
-          <View style={styles.statsContainer}>
-            <View style={styles.statItem}>
-              <View style={[styles.statIcon, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
-                <MaterialCommunityIcons name="home-group" size={18} color={primaryColor} />
-              </View>
-              <View>
-                <ThemedText style={[styles.statValue, { color: textColor }]}>
-                  {property.units.length}
-                </ThemedText>
-                <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Units</ThemedText>
-              </View>
-            </View>
-            <View style={styles.statItem}>
-              <View style={[styles.statIcon, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
-                <MaterialCommunityIcons name="account-check" size={18} color={successColor} />
-              </View>
-              <View>
-                <ThemedText style={[styles.statValue, { color: textColor }]}>
-                  {occupiedUnits}
-                </ThemedText>
-                <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Occupied</ThemedText>
-              </View>
-            </View>
-            <View style={styles.statItem}>
-              <View style={[styles.statIcon, { backgroundColor: isDark ? '#374151' : '#f3f4f6' }]}>
-                <MaterialCommunityIcons name="door" size={18} color={warningColor} />
-              </View>
-              <View>
-                <ThemedText style={[styles.statValue, { color: textColor }]}>
-                  {totalSubUnits}
-                </ThemedText>
-                <ThemedText style={[styles.statLabel, { color: secondaryTextColor }]}>Rooms</ThemedText>
-              </View>
-            </View>
           </View>
         </View>
 
-        {/* Property Type Badge */}
-        <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <View style={styles.cardHeader}>
-            <View style={styles.iconContainer}>
-              <MaterialCommunityIcons name="home-city-outline" size={20} color={primaryColor} />
-            </View>
-            <ThemedText style={[styles.cardTitle, { color: textColor }]}>Property Type</ThemedText>
-          </View>
-          <View style={[styles.typeBadge, { backgroundColor: `${primaryColor}15` }]}>
-            <MaterialCommunityIcons 
-              name={property.propertyType === 'single_unit' ? 'home' : 'office-building'} 
-              size={20} 
-              color={primaryColor} 
-            />
-            <ThemedText style={[styles.typeText, { color: primaryColor }]}>
-              {property.propertyType === 'single_unit' ? 'Single Unit Property' : 'Multi-Unit Property'}
-            </ThemedText>
-          </View>
-          <ThemedText style={[styles.typeDescription, { color: secondaryTextColor }]}>
-            {property.propertyType === 'single_unit' 
-              ? 'This property has one main unit with individual rooms (sub-units).'
-              : 'This property has multiple units, each with their own rooms (sub-units).'}
-          </ThemedText>
-        </View>
-
-        {/* Units Section */}
-        <View style={[styles.card, { backgroundColor: cardBgColor, borderColor }]}>
-          <View style={styles.cardHeaderWithAction}>
-            <View style={styles.cardHeaderLeft}>
-              <View style={styles.iconContainer}>
-                <MaterialCommunityIcons name="floor-plan" size={20} color={primaryColor} />
-              </View>
-              <ThemedText style={[styles.cardTitle, { color: textColor }]}>
-                Units & Rooms
-              </ThemedText>
-            </View>
-            <TouchableOpacity 
-              style={[styles.addButton, { backgroundColor: primaryColor }]}
-              onPress={() => setShowAddUnitModal(true)}
+        {/* Rental Setup */}
+        <View style={styles.section}>
+          <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Rental Setup</ThemedText>
+          <View style={styles.radioGroup}>
+            <TouchableOpacity
+              style={styles.radioOption}
+              onPress={() => handleUpdateProperty({ propertyType: 'single_unit' })}
             >
-              <MaterialCommunityIcons name="plus" size={18} color="white" />
-              <ThemedText style={styles.addButtonText}>Add Unit</ThemedText>
+              <View style={[
+                styles.radioButton,
+                { borderColor: property.propertyType === 'single_unit' ? primaryColor : borderColor },
+              ]}>
+                {property.propertyType === 'single_unit' && (
+                  <View style={[styles.radioDot, { backgroundColor: primaryColor }]} />
+                )}
+              </View>
+              <ThemedText style={[styles.radioLabel, { color: textColor }]}>Single Unit</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.radioOption}
+              onPress={() => handleUpdateProperty({ propertyType: 'multi_unit' })}
+            >
+              <View style={[
+                styles.radioButton,
+                { borderColor: property.propertyType === 'multi_unit' ? primaryColor : borderColor },
+              ]}>
+                {property.propertyType === 'multi_unit' && (
+                  <View style={[styles.radioDot, { backgroundColor: primaryColor }]} />
+                )}
+              </View>
+              <ThemedText style={[styles.radioLabel, { color: textColor }]}>Multi-Unit</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.radioOption}
+              onPress={() => handleUpdateProperty({ propertyType: 'commercial' })}
+            >
+              <View style={[
+                styles.radioButton,
+                { borderColor: property.propertyType === 'commercial' ? primaryColor : borderColor },
+              ]}>
+                {property.propertyType === 'commercial' && (
+                  <View style={[styles.radioDot, { backgroundColor: primaryColor }]} />
+                )}
+              </View>
+              <ThemedText style={[styles.radioLabel, { color: textColor }]}>Commercial</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.radioOption}
+              onPress={() => handleUpdateProperty({ propertyType: 'parking' })}
+            >
+              <View style={[
+                styles.radioButton,
+                { borderColor: property.propertyType === 'parking' ? primaryColor : borderColor },
+              ]}>
+                {property.propertyType === 'parking' && (
+                  <View style={[styles.radioDot, { backgroundColor: primaryColor }]} />
+                )}
+              </View>
+              <ThemedText style={[styles.radioLabel, { color: textColor }]}>Parking</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Utilities Section */}
+        <View style={styles.section}>
+          <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Utilities</ThemedText>
+          <ThemedText style={[styles.inputLabel, { color: secondaryTextColor, marginBottom: 12 }]}>
+            Who pays for each utility?
+          </ThemedText>
+          {[
+            { key: 'electricity', label: 'Electricity' },
+            { key: 'heatGas', label: 'Heat / Gas' },
+            { key: 'water', label: 'Water' },
+            { key: 'wifi', label: 'Wi-Fi' },
+            { key: 'rentalEquipments', label: 'Rental Equipments' },
+          ].map((utility) => (
+            <View key={utility.key} style={styles.utilityRow}>
+              <ThemedText style={[styles.utilityLabel, { color: textColor }]}>
+                {utility.label}
+              </ThemedText>
+              <View style={styles.utilityButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.utilityButton,
+                    { borderColor, backgroundColor: inputBgColor },
+                    property.utilities?.[utility.key as keyof typeof property.utilities] === 'landlord' && {
+                      backgroundColor: primaryColor,
+                      borderColor: primaryColor,
+                    },
+                  ]}
+                  onPress={() => handleUpdateProperty({
+                    utilities: {
+                      ...(property.utilities || {
+                        electricity: 'landlord',
+                        heatGas: 'landlord',
+                        water: 'landlord',
+                        wifi: 'landlord',
+                        rentalEquipments: 'landlord',
+                      }),
+                      [utility.key]: 'landlord',
+                    }
+                  })}
+                >
+                  <ThemedText style={[
+                    styles.utilityButtonText,
+                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'landlord' ? '#fff' : textColor },
+                  ]}>
+                    Landlord
+                  </ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.utilityButton,
+                    { borderColor, backgroundColor: inputBgColor },
+                    property.utilities?.[utility.key as keyof typeof property.utilities] === 'tenant' && {
+                      backgroundColor: primaryColor,
+                      borderColor: primaryColor,
+                    },
+                  ]}
+                  onPress={() => handleUpdateProperty({
+                    utilities: {
+                      ...(property.utilities || {
+                        electricity: 'landlord',
+                        heatGas: 'landlord',
+                        water: 'landlord',
+                        wifi: 'landlord',
+                        rentalEquipments: 'landlord',
+                      }),
+                      [utility.key]: 'tenant',
+                    }
+                  })}
+                >
+                  <ThemedText style={[
+                    styles.utilityButtonText,
+                    { color: property.utilities?.[utility.key as keyof typeof property.utilities] === 'tenant' ? '#fff' : textColor },
+                  ]}>
+                    Tenant
+                  </ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* Manage Rooms/Units */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+              {property.propertyType === 'single_unit' ? 'Manage Rooms' : 'Manage Units'}
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.addButton, { backgroundColor: `${primaryColor}20` }]}
+              onPress={handleAddRoom}
+            >
+              <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
+              <ThemedText style={[styles.addButtonText, { color: primaryColor }]}>
+                {property.propertyType === 'single_unit' ? 'Add Room' : 'Add Unit'}
+              </ThemedText>
             </TouchableOpacity>
           </View>
 
-          {property.units.length === 0 ? (
-            <View style={styles.emptyUnits}>
-              <MaterialCommunityIcons name="home-plus-outline" size={48} color={secondaryTextColor} />
-              <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
-                No units added yet
-              </ThemedText>
-              <ThemedText style={[styles.emptySubtext, { color: secondaryTextColor }]}>
-                Add units to organize your property
-              </ThemedText>
+          {property.propertyType === 'single_unit' ? (
+            // Single Unit - Show Rooms
+            <View style={styles.roomsList}>
+              {rooms.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <MaterialCommunityIcons name="door-open" size={48} color={secondaryTextColor} />
+                  <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                    No rooms added yet
+                  </ThemedText>
+                </View>
+              ) : (
+                rooms.map((room) => (
+                  <View
+                    key={room.id}
+                    style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                  >
+                    <View style={styles.roomInfo}>
+                      <ThemedText style={[styles.roomName, { color: textColor }]}>
+                        Room {rooms.indexOf(room) + 1} - {room.name}
+                      </ThemedText>
+                      <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]}>
+                        {room.rentPrice ? `$${room.rentPrice.toLocaleString()}/mo` : 'No rent set'}
+                        {room.tenantName && ` - ${room.tenantName}`}
+                      </ThemedText>
+                    </View>
+                    {isEditMode && (
+                      <TouchableOpacity
+                        onPress={() => handleRoomPress(property.units[0], room)}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={20} color={primaryColor} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))
+              )}
             </View>
           ) : (
-            property.units.map((unit) => (
-              <View key={unit.id} style={[styles.unitContainer, { borderColor }]}>
-                <TouchableOpacity 
-                  style={styles.unitHeader}
-                  onPress={() => toggleUnitExpanded(unit.id)}
-                >
-                  <View style={styles.unitHeaderLeft}>
-                    <MaterialCommunityIcons 
-                      name={expandedUnits.has(unit.id) ? 'chevron-down' : 'chevron-right'} 
-                      size={24} 
-                      color={secondaryTextColor} 
-                    />
-                    <View>
-                      <ThemedText style={[styles.unitName, { color: textColor }]}>
-                        {unit.name}
-                      </ThemedText>
-                      <View style={styles.unitMeta}>
-                        <View style={[
-                          styles.occupancyBadge, 
-                          { backgroundColor: unit.isOccupied ? `${successColor}20` : `${dangerColor}20` }
-                        ]}>
-                          <View style={[
-                            styles.occupancyDot, 
-                            { backgroundColor: unit.isOccupied ? successColor : dangerColor }
-                          ]} />
-                          <ThemedText style={[
-                            styles.occupancyText, 
-                            { color: unit.isOccupied ? successColor : dangerColor }
-                          ]}>
-                            {unit.isOccupied ? 'Occupied' : 'Vacant'}
-                          </ThemedText>
-                        </View>
-                        <ThemedText style={[styles.roomCount, { color: secondaryTextColor }]}>
+            // Multi-Unit - Show Units
+            <View style={styles.unitsList}>
+              {property.units.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <MaterialCommunityIcons name="home-plus-outline" size={48} color={secondaryTextColor} />
+                  <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                    No units added yet
+                  </ThemedText>
+                </View>
+              ) : (
+                property.units.map((unit) => (
+                  <View
+                    key={unit.id}
+                    style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                  >
+                    <TouchableOpacity
+                      style={styles.roomInfoContainer}
+                      onPress={() => handleUnitPress(unit)}
+                    >
+                      <View style={styles.roomInfo}>
+                        <ThemedText style={[styles.roomName, { color: textColor }]}>
+                          {unit.name}
+                        </ThemedText>
+                        <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]}>
                           {unit.subUnits.length} room{unit.subUnits.length !== 1 ? 's' : ''}
+                          {unit.isOccupied ? ' • Occupied' : ' • Vacant'}
                         </ThemedText>
                       </View>
-                    </View>
-                  </View>
-                  <TouchableOpacity 
-                    onPress={() => handleDeleteUnit(unit.id)}
-                    style={styles.deleteButton}
-                  >
-                    <MaterialCommunityIcons name="trash-can-outline" size={20} color={dangerColor} />
-                  </TouchableOpacity>
-                </TouchableOpacity>
-
-                {expandedUnits.has(unit.id) && (
-                  <View style={styles.subUnitsContainer}>
-                    {unit.subUnits.map((subUnit) => (
-                      <View key={subUnit.id} style={[styles.subUnitItem, { backgroundColor: isDark ? '#1a242d' : '#f9fafb' }]}>
-                        <View style={styles.subUnitInfo}>
-                          <MaterialCommunityIcons 
-                            name={getSubUnitIcon(subUnit.type) as any} 
-                            size={18} 
-                            color={secondaryTextColor} 
-                          />
-                          <ThemedText style={[styles.subUnitName, { color: textColor }]}>
-                            {subUnit.name}
-                          </ThemedText>
-                          <View style={[styles.subUnitTypeBadge, { backgroundColor: `${primaryColor}15` }]}>
-                            <ThemedText style={[styles.subUnitTypeText, { color: primaryColor }]}>
-                              {subUnit.type.replace('_', ' ')}
-                            </ThemedText>
-                          </View>
-                        </View>
-                        <TouchableOpacity onPress={() => handleDeleteSubUnit(unit.id, subUnit.id)}>
-                          <MaterialCommunityIcons name="close" size={18} color={secondaryTextColor} />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                    <TouchableOpacity 
-                      style={[styles.addSubUnitButton, { borderColor }]}
-                      onPress={() => openAddSubUnitModal(unit.id)}
-                    >
-                      <MaterialCommunityIcons name="plus" size={18} color={primaryColor} />
-                      <ThemedText style={[styles.addSubUnitText, { color: primaryColor }]}>
-                        Add Room
-                      </ThemedText>
+                      <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
                     </TouchableOpacity>
+                    {isEditMode && (
+                      <TouchableOpacity
+                        style={[styles.addRoomButton, { backgroundColor: `${primaryColor}20` }]}
+                        onPress={() => handleAddRoomToUnit(unit.id)}
+                      >
+                        <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
+                        <ThemedText style={[styles.addRoomButtonText, { color: primaryColor }]}>
+                          Add Room
+                        </ThemedText>
+                      </TouchableOpacity>
+                    )}
                   </View>
-                )}
-              </View>
-            ))
+                ))
+              )}
+            </View>
           )}
         </View>
+
       </ScrollView>
 
-      {/* Add Unit Modal */}
+      {/* Unit Detail Modal */}
       <Modal
-        visible={showAddUnitModal}
+        visible={showUnitModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowAddUnitModal(false)}
+        onRequestClose={() => setShowUnitModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddUnitModal(false)} />
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowUnitModal(false)} />
           <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
             <View style={styles.modalHandle} />
-            <ThemedText style={[styles.modalTitle, { color: textColor }]}>Add New Unit</ThemedText>
-            <ThemedText style={[styles.modalDescription, { color: secondaryTextColor }]}>
-              {property.propertyType === 'single_unit' 
-                ? 'Add the main unit for your single-unit property.'
-                : 'Add a unit (e.g., Apartment 1A, Unit 2B) to your property.'}
-            </ThemedText>
-            <TextInput
-              style={[styles.modalInput, { backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor, color: textColor }]}
-              placeholder="Enter unit name (e.g., Unit A, Apartment 101)"
-              placeholderTextColor={secondaryTextColor}
-              value={newUnitName}
-              onChangeText={setNewUnitName}
-              autoFocus
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.cancelButton, { borderColor }]}
-                onPress={() => { setShowAddUnitModal(false); setNewUnitName(''); }}
-              >
-                <ThemedText style={[styles.cancelButtonText, { color: textColor }]}>Cancel</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.confirmButton, { backgroundColor: primaryColor }]}
-                onPress={handleAddUnit}
-              >
-                <ThemedText style={styles.confirmButtonText}>Add Unit</ThemedText>
+            <View style={styles.modalHeader}>
+              <ThemedText style={[styles.modalTitle, { color: textColor }]}>
+                {selectedUnit?.name}
+              </ThemedText>
+              <TouchableOpacity onPress={() => setShowUnitModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textColor} />
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </Modal>
+            
+            {selectedUnit && (
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.modalSection}>
+                  <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Details</ThemedText>
+                  <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                    <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Status</ThemedText>
+                    <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                      {selectedUnit.isOccupied ? 'Occupied' : 'Vacant'}
+                    </ThemedText>
+                  </View>
+                  {selectedUnit.bedrooms && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Bedrooms</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        {selectedUnit.bedrooms}
+                      </ThemedText>
+                    </View>
+                  )}
+                  {selectedUnit.defaultRentPrice && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Default Rent</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        ${selectedUnit.defaultRentPrice.toLocaleString()}/mo
+                      </ThemedText>
+                    </View>
+                  )}
+                </View>
 
-      {/* Add Sub-Unit Modal */}
-      <Modal
-        visible={showAddSubUnitModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowAddSubUnitModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setShowAddSubUnitModal(false)} />
-          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
-            <View style={styles.modalHandle} />
-            <ThemedText style={[styles.modalTitle, { color: textColor }]}>Add New Room</ThemedText>
-            <ThemedText style={[styles.modalDescription, { color: secondaryTextColor }]}>
-              Add a room (sub-unit) to this unit.
-            </ThemedText>
-            
-            <TextInput
-              style={[styles.modalInput, { backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor, color: textColor }]}
-              placeholder="Enter room name (e.g., Master Bedroom)"
-              placeholderTextColor={secondaryTextColor}
-              value={newSubUnitName}
-              onChangeText={setNewSubUnitName}
-              autoFocus
-            />
-            
-            <ThemedText style={[styles.typeSelectLabel, { color: textColor }]}>Room Type</ThemedText>
-            <View style={styles.typeGrid}>
-              {SUB_UNIT_TYPES.map((type) => (
-                <TouchableOpacity
-                  key={type.value}
-                  style={[
-                    styles.typeOption,
-                    {
-                      backgroundColor: newSubUnitType === type.value ? `${primaryColor}15` : (isDark ? '#1a242d' : '#f9fafb'),
-                      borderColor: newSubUnitType === type.value ? primaryColor : borderColor,
-                    },
-                  ]}
-                  onPress={() => setNewSubUnitType(type.value)}
-                >
-                  <MaterialCommunityIcons 
-                    name={type.icon as any} 
-                    size={20} 
-                    color={newSubUnitType === type.value ? primaryColor : secondaryTextColor} 
-                  />
-                  <ThemedText 
-                    style={[
-                      styles.typeOptionText, 
-                      { color: newSubUnitType === type.value ? primaryColor : textColor }
-                    ]}
-                  >
-                    {type.label}
-                  </ThemedText>
-                </TouchableOpacity>
-              ))}
-            </View>
-            
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.cancelButton, { borderColor }]}
-                onPress={() => { 
-                  setShowAddSubUnitModal(false); 
-                  setNewSubUnitName(''); 
-                  setSelectedUnitId(null);
-                }}
-              >
-                <ThemedText style={[styles.cancelButtonText, { color: textColor }]}>Cancel</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.confirmButton, { backgroundColor: primaryColor }]}
-                onPress={handleAddSubUnit}
-              >
-                <ThemedText style={styles.confirmButtonText}>Add Room</ThemedText>
-              </TouchableOpacity>
-            </View>
+                <View style={styles.modalSection}>
+                  <View style={styles.modalSectionHeader}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>
+                      Rooms ({selectedUnit.subUnits.length})
+                    </ThemedText>
+                    {isEditMode && (
+                      <TouchableOpacity
+                        style={[styles.modalAddButton, { backgroundColor: `${primaryColor}20` }]}
+                        onPress={() => handleAddRoomToUnit(selectedUnit.id)}
+                      >
+                        <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {selectedUnit.subUnits.length === 0 ? (
+                    <View style={styles.modalEmptyState}>
+                      <MaterialCommunityIcons name="door-open" size={48} color={secondaryTextColor} />
+                      <ThemedText style={[styles.modalEmptyText, { color: secondaryTextColor }]}>
+                        No rooms added yet
+                      </ThemedText>
+                    </View>
+                  ) : (
+                    selectedUnit.subUnits.map((room) => (
+                      <TouchableOpacity
+                        key={room.id}
+                        style={[styles.modalRoomItem, { backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor }]}
+                        onPress={() => {
+                          setShowUnitModal(false);
+                          if (isEditMode) {
+                            handleRoomPress(selectedUnit, room);
+                          }
+                        }}
+                      >
+                        <ThemedText style={[styles.modalRoomName, { color: textColor }]}>
+                          {room.name}
+                        </ThemedText>
+                        {room.rentPrice && (
+                          <ThemedText style={[styles.modalRoomRent, { color: secondaryTextColor }]}>
+                            ${room.rentPrice.toLocaleString()}/mo
+                          </ThemedText>
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -649,405 +621,378 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 20,
-  },
-  headerContainer: {
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '600',
-  },
-<<<<<<< HEAD
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  loadingText: {
-    fontSize: 16,
-  },
-  backButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-=======
-  progressContainer: {
-    marginBottom: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  progressBar: {
-    height: 3,
-    backgroundColor: '#e2e8f0',
-    borderRadius: 1.5,
-    marginBottom: 8,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 1.5,
-  },
-  progressText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  card: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-  },
-  stepContent: {
-    gap: 16,
-  },
-  stepTitle: {
-    fontSize: 18,
     fontWeight: '700',
-    flex: 1,
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  loadingText: {
-    fontSize: 16,
-  },
-  backButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  backButtonText: {
-    color: 'white',
-    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
-    gap: 16,
+    paddingHorizontal: 16,
   },
-  propertyImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-  },
-  imagePlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  card: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 16,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
-  },
-  cardHeaderWithAction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  titleSection: {
+    marginTop: 16,
     marginBottom: 16,
   },
-  cardHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#137fec15',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: {
-    fontSize: 16,
+  propertyName: {
+    fontSize: 32,
     fontWeight: '700',
+    marginBottom: 8,
   },
-  locationInfo: {
-    gap: 4,
-  },
-  addressText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  cityStateText: {
-    fontSize: 14,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 16,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  statIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  statLabel: {
-    fontSize: 12,
-  },
-  typeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  typeText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  typeDescription: {
-    fontSize: 13,
-    marginTop: 10,
-    lineHeight: 18,
-  },
-  addButton: {
+  locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
   },
-  addButtonText: {
-    color: 'white',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  emptyUnits: {
-    alignItems: 'center',
-    paddingVertical: 32,
-    gap: 8,
-  },
-  emptyText: {
+  locationText: {
     fontSize: 16,
-    fontWeight: '500',
   },
-  emptySubtext: {
-    fontSize: 13,
-  },
-  unitContainer: {
-    borderWidth: 1,
-    borderRadius: 10,
+  imageContainer: {
+    marginTop: 16,
     marginBottom: 12,
+    borderRadius: 12,
     overflow: 'hidden',
   },
-  unitHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
+  propertyImage: {
+    width: SCREEN_WIDTH - 32,
+    height: (SCREEN_WIDTH - 32) * 0.5625, // 16:9 aspect ratio
+    backgroundColor: '#e5e7eb',
   },
-  unitHeaderLeft: {
+  imageIndicators: {
     flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
-    flex: 1,
+    marginTop: 12,
   },
-  unitName: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  unitMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 4,
-  },
-  occupancyBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-  },
-  occupancyDot: {
+  indicator: {
     width: 6,
     height: 6,
     borderRadius: 3,
   },
-  occupancyText: {
-    fontSize: 11,
+  infoSection: {
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    gap: 12,
+  },
+  infoRow: {
+    gap: 4,
+  },
+  infoLabel: {
+    fontSize: 12,
     fontWeight: '500',
   },
-  roomCount: {
-    fontSize: 12,
+  infoValue: {
+    fontSize: 14,
+    fontWeight: '600',
   },
-  deleteButton: {
-    padding: 8,
+  section: {
+    paddingVertical: 16,
+    gap: 12,
   },
-  subUnitsContainer: {
-    padding: 12,
-    paddingTop: 0,
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  radioGroup: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  propertyTypeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  radioOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  subUnitItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 10,
+  radioButton: {
+    width: 16,
+    height: 16,
     borderRadius: 8,
-  },
-  subUnitInfo: {
-    flexDirection: 'row',
+    borderWidth: 2,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
-    flex: 1,
   },
-  subUnitName: {
+  radioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  radioLabel: {
     fontSize: 14,
     fontWeight: '500',
   },
-  subUnitTypeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
-  subUnitTypeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'capitalize',
+  addButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
-  addSubUnitButton: {
+  roomsList: {
+    gap: 8,
+  },
+  unitsList: {
+    gap: 8,
+  },
+  roomCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  roomInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  roomName: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  roomDetails: {
+    fontSize: 12,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    gap: 8,
+  },
+  emptyText: {
+    fontSize: 14,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  toggle: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  toggleThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  utilitiesExclusionContainer: {
+    marginTop: 12,
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  textInput: {
+    minHeight: 60,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    fontSize: 14,
+    textAlignVertical: 'top',
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  roomInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flex: 1,
+  },
+  addRoomButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderRadius: 8,
-    marginTop: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginTop: 8,
   },
-  addSubUnitText: {
-    fontSize: 13,
+  addRoomButtonText: {
+    fontSize: 12,
     fontWeight: '600',
   },
-  // Modal styles
   modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
   modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   modalContent: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 20,
-    paddingTop: 12,
+    maxHeight: '90%',
+    paddingBottom: 40,
   },
   modalHandle: {
     width: 40,
     height: 4,
-    backgroundColor: '#d1d5db',
+    backgroundColor: '#ccc',
     borderRadius: 2,
     alignSelf: 'center',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    marginTop: 8,
     marginBottom: 8,
   },
-  modalDescription: {
-    fontSize: 14,
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  modalInput: {
-    height: 52,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    marginBottom: 16,
-  },
-  typeSelectLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
-  typeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 20,
-  },
-  typeOption: {
+  modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderWidth: 1,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
-  typeOptionText: {
-    fontSize: 13,
-    fontWeight: '500',
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
   },
-  modalActions: {
+  modalScroll: {
+    paddingHorizontal: 16,
+  },
+  modalSection: {
+    paddingVertical: 16,
+  },
+  modalSectionHeader: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
-  modalButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 10,
+  modalSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalAddButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  modalInfoLabel: {
+    fontSize: 14,
+  },
+  modalInfoValue: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalEmptyState: {
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 32,
+    gap: 8,
   },
-  cancelButton: {
+  modalEmptyText: {
+    fontSize: 14,
+  },
+  modalRoomItem: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  modalRoomName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  modalRoomRent: {
+    fontSize: 12,
+  },
+  utilityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  utilityLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  utilityButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  utilityButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
     borderWidth: 1,
   },
-  cancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  confirmButton: {},
-  confirmButtonText: {
-    color: 'white',
-    fontSize: 15,
+  utilityButtonText: {
+    fontSize: 13,
     fontWeight: '600',
   },
 });

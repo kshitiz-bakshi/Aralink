@@ -1,19 +1,19 @@
-import React, { useState } from 'react';
-import { 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  TextInput, 
-  View, 
-  Image,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import {
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -36,121 +36,139 @@ export default function AddPropertyScreen() {
   const inputBgColor = isDark ? '#1f2937' : '#ffffff';
 
   const [formData, setFormData] = useState({
-    streetAddress: '',
+    // Location fields
+    location: '',
+    address1: '',
+    address2: '',
     city: '',
     state: '',
     zipCode: '',
-    photo: '',
-    propertyType: 'single_unit' as 'single_unit' | 'multi_unit',
+    country: 'United States',
+    
+    // Property details
+    name: '',
+    propertyType: 'single_unit' as 'single_unit' | 'multi_unit' | 'commercial' | 'parking',
+    landlordName: '',
+    
+    // Rental options (conditional)
+    rentCompleteProperty: false,
+    description: '',
+    photos: [] as string[],
+    
+    // Parking and rent (conditional)
+    parkingIncluded: false,
+    rentAmount: '',
+    
+    // Utilities
+    utilities: {
+      electricity: 'landlord' as 'landlord' | 'tenant',
+      heatGas: 'landlord' as 'landlord' | 'tenant',
+      water: 'landlord' as 'landlord' | 'tenant',
+      wifi: 'landlord' as 'landlord' | 'tenant',
+      rentalEquipments: 'landlord' as 'landlord' | 'tenant',
+    },
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [addressSuggestions, setAddressSuggestions] = useState<string[]>([]);
 
-  const pickImage = async () => {
-    // Request permission
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  // Handle address autocomplete
+  const handleAddressChange = (text: string) => {
+    setFormData(prev => ({ ...prev, address1: text }));
     
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Please allow access to your photo library to add property photos.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [16, 9],
-      quality: 0.8,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setFormData(prev => ({ ...prev, photo: result.assets[0].uri }));
+    // TODO: Implement Google Places API call
+    // For now, just show mock suggestions
+    if (text.length > 2) {
+      setAddressSuggestions([
+        `${text} Street, New York, NY`,
+        `${text} Avenue, Los Angeles, CA`,
+        `${text} Road, Chicago, IL`,
+      ]);
+    } else {
+      setAddressSuggestions([]);
     }
   };
 
-  const takePhoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Please allow access to your camera to take property photos.');
-      return;
-    }
+  const selectAddress = (address: string) => {
+    // Parse the selected address
+    const parts = address.split(', ');
+    setFormData(prev => ({
+      ...prev,
+      address1: parts[0] || '',
+      city: parts[1] || '',
+      state: parts[2] || '',
+    }));
+    setAddressSuggestions([]);
+  };
 
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [16, 9],
-      quality: 0.8,
-    });
+  const pickImages = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Please allow access to your photo library.');
+        return;
+      }
 
-    if (!result.canceled && result.assets[0]) {
-      setFormData(prev => ({ ...prev, photo: result.assets[0].uri }));
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets) {
+        const newPhotos = result.assets.map(asset => asset.uri);
+        setFormData(prev => ({ ...prev, photos: [...prev.photos, ...newPhotos] }));
+      }
+    } catch (error) {
+      console.error('Error picking images:', error);
+      Alert.alert('Error', 'Failed to pick images. Please try again.');
     }
   };
 
-  const handlePhotoPress = () => {
-    Alert.alert(
-      'Add Photo',
-      'Choose how you want to add a photo',
-      [
-        { text: 'Take Photo', onPress: takePhoto },
-        { text: 'Choose from Library', onPress: pickImage },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  };
-
-  const removePhoto = () => {
-    setFormData(prev => ({ ...prev, photo: '' }));
-  };
-
-  const validateForm = () => {
-    if (!formData.streetAddress.trim()) {
-      Alert.alert('Required Field', 'Please enter a street address.');
-      return false;
-    }
-    if (!formData.city.trim()) {
-      Alert.alert('Required Field', 'Please enter a city.');
-      return false;
-    }
-    if (!formData.state.trim()) {
-      Alert.alert('Required Field', 'Please enter a state.');
-      return false;
-    }
-    if (!formData.zipCode.trim()) {
-      Alert.alert('Required Field', 'Please enter a ZIP code.');
-      return false;
-    }
-    return true;
+  const removePhoto = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      photos: prev.photos.filter((_, i) => i !== index),
+    }));
   };
 
   const handleSubmit = () => {
-    if (!validateForm()) return;
+    // Validation
+    if (!formData.address1.trim()) {
+      Alert.alert('Error', 'Please enter an address');
+      return;
+    }
+    if (!formData.city.trim() || !formData.state.trim() || !formData.zipCode.trim()) {
+      Alert.alert('Error', 'Please complete the location details');
+      return;
+    }
 
     setIsSubmitting(true);
     
     try {
-      const newPropertyId = addProperty({
-        streetAddress: formData.streetAddress.trim(),
-        city: formData.city.trim(),
-        state: formData.state.trim(),
-        zipCode: formData.zipCode.trim(),
-        photo: formData.photo || undefined,
+      addProperty({
+        location: formData.location || `${formData.city}, ${formData.state}`,
+        address1: formData.address1,
+        address2: formData.address2 || undefined,
+        city: formData.city,
+        state: formData.state,
+        zipCode: formData.zipCode,
+        country: formData.country,
+        name: formData.name || undefined,
         propertyType: formData.propertyType,
+        landlordName: formData.landlordName || undefined,
+        rentCompleteProperty: formData.propertyType !== 'multi_unit' ? formData.rentCompleteProperty : undefined,
+        description: formData.description || undefined,
+        photos: formData.photos.length > 0 ? formData.photos : undefined,
+        parkingIncluded: formData.propertyType !== 'multi_unit' ? formData.parkingIncluded : undefined,
+        rentAmount: formData.propertyType !== 'multi_unit' && formData.rentAmount 
+          ? parseFloat(formData.rentAmount) 
+          : undefined,
+        utilities: formData.utilities,
       });
-
-      Alert.alert(
-        'Property Added',
-        'Your property has been successfully added!',
-        [
-          {
-            text: 'View Property',
-            onPress: () => router.replace(`/property-detail?id=${newPropertyId}`),
-          },
-          {
-            text: 'Back to List',
-            onPress: () => router.back(),
-          },
-        ]
-      );
+      
+      router.back();
     } catch (error) {
       Alert.alert('Error', 'Failed to add property. Please try again.');
     } finally {
@@ -158,148 +176,417 @@ export default function AddPropertyScreen() {
     }
   };
 
+  const isMultiUnit = formData.propertyType === 'multi_unit';
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top, borderBottomColor: borderColor }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerButton}>
-          <ThemedText style={[styles.cancelText, { color: primaryColor }]}>Cancel</ThemedText>
+      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color={textColor} />
         </TouchableOpacity>
-        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Add New Property</ThemedText>
-        <View style={styles.headerButton} />
+        <ThemedText style={[styles.headerTitle, { color: textColor }]}>Add Property</ThemedText>
+        <View style={{ width: 24 }} />
       </View>
 
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
-        <ScrollView 
+        <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Property Location Section */}
+          {/* Location Section */}
           <View style={styles.section}>
-            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
-              Property Location
-            </ThemedText>
-
-            {/* Street Address */}
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Location</ThemedText>
+            
+            {/* Location Name (Optional) */}
             <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>Street Address</ThemedText>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                Location Name (Optional)
+              </ThemedText>
               <TextInput
                 style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="Enter street address"
+                placeholder="e.g., Downtown San Francisco"
                 placeholderTextColor={secondaryTextColor}
-                value={formData.streetAddress}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, streetAddress: text }))}
+                value={formData.location}
+                onChangeText={(text) => setFormData(prev => ({ ...prev, location: text }))}
               />
             </View>
 
-            {/* City */}
+            {/* Address 1 with Autocomplete */}
             <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>City</ThemedText>
+              <ThemedText style={[styles.label, { color: textColor }]}>
+                Address <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+              </ThemedText>
               <TextInput
                 style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="Enter city"
+                placeholder="Start typing address..."
                 placeholderTextColor={secondaryTextColor}
-                value={formData.city}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, city: text }))}
+                value={formData.address1}
+                onChangeText={handleAddressChange}
+              />
+              {addressSuggestions.length > 0 && (
+                <View style={[styles.suggestionsContainer, { backgroundColor: cardBgColor, borderColor }]}>
+                  {addressSuggestions.map((suggestion, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[styles.suggestionItem, { borderBottomColor: borderColor }]}
+                      onPress={() => selectAddress(suggestion)}
+                    >
+                      <MaterialCommunityIcons name="map-marker" size={20} color={secondaryTextColor} />
+                      <ThemedText style={[styles.suggestionText, { color: textColor }]}>
+                        {suggestion}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Address 2 */}
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                Address Line 2 (Optional)
+              </ThemedText>
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                placeholder="Apartment, suite, unit, etc."
+                placeholderTextColor={secondaryTextColor}
+                value={formData.address2}
+                onChangeText={(text) => setFormData(prev => ({ ...prev, address2: text }))}
               />
             </View>
 
-            {/* State and ZIP */}
+            {/* City, State, Zip */}
             <View style={styles.row}>
-              <View style={[styles.inputGroup, styles.halfWidth]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>State</ThemedText>
+              <View style={[styles.inputGroup, { flex: 2 }]}>
+                <ThemedText style={[styles.label, { color: textColor }]}>
+                  City <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                </ThemedText>
                 <TextInput
                   style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="Select state"
+                  placeholder="City"
+                  placeholderTextColor={secondaryTextColor}
+                  value={formData.city}
+                  onChangeText={(text) => setFormData(prev => ({ ...prev, city: text }))}
+                />
+              </View>
+              <View style={[styles.inputGroup, { flex: 1 }]}>
+                <ThemedText style={[styles.label, { color: textColor }]}>
+                  State <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                </ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                  placeholder="State"
                   placeholderTextColor={secondaryTextColor}
                   value={formData.state}
                   onChangeText={(text) => setFormData(prev => ({ ...prev, state: text }))}
                 />
               </View>
-              <View style={[styles.inputGroup, styles.halfWidth]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>ZIP Code</ThemedText>
+            </View>
+
+            {/* Zip Code and Country */}
+            <View style={styles.row}>
+              <View style={[styles.inputGroup, { flex: 1 }]}>
+                <ThemedText style={[styles.label, { color: textColor }]}>
+                  Zip Code <ThemedText style={{ color: '#ef4444' }}>*</ThemedText>
+                </ThemedText>
                 <TextInput
                   style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                  placeholder="Enter ZIP"
+                  placeholder="Zip Code"
                   placeholderTextColor={secondaryTextColor}
                   value={formData.zipCode}
                   onChangeText={(text) => setFormData(prev => ({ ...prev, zipCode: text }))}
-                  keyboardType="number-pad"
-                  maxLength={10}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={[styles.inputGroup, { flex: 2 }]}>
+                <ThemedText style={[styles.label, { color: textColor }]}>Country</ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                  placeholder="Country"
+                  placeholderTextColor={secondaryTextColor}
+                  value={formData.country}
+                  onChangeText={(text) => setFormData(prev => ({ ...prev, country: text }))}
                 />
               </View>
             </View>
           </View>
 
-          {/* Property Photo Section */}
+          {/* Property Name (Optional) */}
           <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
-                Property Photo
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Property Details</ThemedText>
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                Property Name (Optional)
               </ThemedText>
-              <ThemedText style={[styles.optionalText, { color: secondaryTextColor }]}>
-                (Optional)
-              </ThemedText>
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                placeholder="e.g., Sunset Apartments"
+                placeholderTextColor={secondaryTextColor}
+                value={formData.name}
+                onChangeText={(text) => setFormData(prev => ({ ...prev, name: text }))}
+              />
             </View>
+          </View>
 
-            {formData.photo ? (
-              <View style={styles.photoContainer}>
-                <Image source={{ uri: formData.photo }} style={styles.photoPreview} />
-                <TouchableOpacity 
-                  style={[styles.removePhotoButton, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
-                  onPress={removePhoto}
+          {/* Rental Setup - 4 Radio Buttons */}
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Rental Setup</ThemedText>
+            <View style={styles.radioGrid}>
+              {[
+                { value: 'single_unit', label: 'Single Unit' },
+                { value: 'multi_unit', label: 'Multi-Unit' },
+                { value: 'commercial', label: 'Commercial' },
+                { value: 'parking', label: 'Parking' },
+              ].map((option) => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.radioButton,
+                    { borderColor, backgroundColor: inputBgColor },
+                    formData.propertyType === option.value && {
+                      borderColor: primaryColor,
+                      backgroundColor: `${primaryColor}10`,
+                    },
+                  ]}
+                  onPress={() => setFormData(prev => ({ 
+                    ...prev, 
+                    propertyType: option.value as any 
+                  }))}
                 >
-                  <MaterialCommunityIcons name="close" size={18} color="white" />
+                  <View style={[
+                    styles.radioCircle,
+                    { borderColor: formData.propertyType === option.value ? primaryColor : borderColor },
+                  ]}>
+                    {formData.propertyType === option.value && (
+                      <View style={[styles.radioCircleInner, { backgroundColor: primaryColor }]} />
+                    )}
+                  </View>
+                  <ThemedText style={[styles.radioLabel, { color: textColor }]}>
+                    {option.label}
+                  </ThemedText>
                 </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.changePhotoButton, { backgroundColor: primaryColor }]}
-                  onPress={handlePhotoPress}
-                >
-                  <MaterialCommunityIcons name="camera" size={18} color="white" />
-                  <ThemedText style={styles.changePhotoText}>Change</ThemedText>
-                </TouchableOpacity>
-              </View>
-            ) : (
+              ))}
+            </View>
+          </View>
+
+          {/* Landlord Name */}
+          <View style={styles.section}>
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                Landlord Name (Optional)
+              </ThemedText>
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                placeholder="Enter landlord name"
+                placeholderTextColor={secondaryTextColor}
+                value={formData.landlordName}
+                onChangeText={(text) => setFormData(prev => ({ ...prev, landlordName: text }))}
+              />
+            </View>
+          </View>
+
+          {/* Rent Complete Property (Only for non-multi-unit) */}
+          {!isMultiUnit && (
+            <View style={styles.section}>
               <TouchableOpacity
-                style={[styles.photoUploadArea, { borderColor, backgroundColor: isDark ? '#1a242d' : '#f9fafb' }]}
-                onPress={handlePhotoPress}
+                style={styles.checkboxRow}
+                onPress={() => setFormData(prev => ({
+                  ...prev,
+                  rentCompleteProperty: !prev.rentCompleteProperty
+                }))}
               >
-                <MaterialCommunityIcons 
-                  name="camera-plus-outline" 
-                  size={40} 
-                  color={secondaryTextColor} 
-                />
-                <ThemedText style={[styles.uploadText, { color: textColor }]}>
-                  Tap to add a photo
-                </ThemedText>
-                <ThemedText style={[styles.uploadSubtext, { color: secondaryTextColor }]}>
-                  Take a photo or choose from gallery
+                <View style={[styles.checkbox, { borderColor }]}>
+                  {formData.rentCompleteProperty && (
+                    <MaterialCommunityIcons name="check" size={18} color={primaryColor} />
+                  )}
+                </View>
+                <ThemedText style={[styles.checkboxLabel, { color: textColor }]}>
+                  Do you want to rent the complete property?
                 </ThemedText>
               </TouchableOpacity>
-            )}
+            </View>
+          )}
+
+          {/* Description */}
+          <View style={styles.section}>
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                Description (Optional)
+              </ThemedText>
+              <TextInput
+                style={[styles.textArea, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                placeholder="Enter property description..."
+                placeholderTextColor={secondaryTextColor}
+                value={formData.description}
+                onChangeText={(text) => setFormData(prev => ({ ...prev, description: text }))}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+            </View>
+          </View>
+
+          {/* Photos */}
+          <View style={styles.section}>
+            <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+              Photos (Optional)
+            </ThemedText>
+            <View style={styles.photosGrid}>
+              {formData.photos.map((photo, index) => (
+                <View key={index} style={styles.photoItem}>
+                  <Image source={{ uri: photo }} style={styles.photoImage} />
+                  <TouchableOpacity
+                    style={styles.photoRemove}
+                    onPress={() => removePhoto(index)}
+                  >
+                    <MaterialCommunityIcons name="close-circle" size={24} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[styles.photoAdd, { borderColor, backgroundColor: inputBgColor }]}
+                onPress={pickImages}
+              >
+                <MaterialCommunityIcons name="camera-plus" size={32} color={primaryColor} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Parking Included (Only for non-multi-unit) */}
+          {!isMultiUnit && (
+            <View style={styles.section}>
+              <TouchableOpacity
+                style={styles.checkboxRow}
+                onPress={() => setFormData(prev => ({
+                  ...prev,
+                  parkingIncluded: !prev.parkingIncluded
+                }))}
+              >
+                <View style={[styles.checkbox, { borderColor }]}>
+                  {formData.parkingIncluded && (
+                    <MaterialCommunityIcons name="check" size={18} color={primaryColor} />
+                  )}
+                </View>
+                <ThemedText style={[styles.checkboxLabel, { color: textColor }]}>
+                  Parking Included
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Rent Amount (Only for non-multi-unit) */}
+          {!isMultiUnit && formData.rentCompleteProperty === true &&(
+            <View style={styles.section}>
+              <View style={styles.inputGroup}>
+                <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                  Rent Amount (Optional)
+                </ThemedText>
+                <View style={styles.currencyInputContainer}>
+                  <ThemedText style={[styles.currencySymbol, { color: secondaryTextColor }]}>$</ThemedText>
+                  <TextInput
+                    style={[styles.currencyInput, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="0.00"
+                    placeholderTextColor={secondaryTextColor}
+                    value={formData.rentAmount}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, rentAmount: text }))}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Utilities Section */}
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Utilities</ThemedText>
+            <ThemedText style={[styles.sectionSubtitle, { color: secondaryTextColor }]}>
+              Who pays for utilities?
+            </ThemedText>
+            
+            {[
+              { key: 'electricity', label: 'Electricity' },
+              { key: 'heatGas', label: 'Heat / Gas' },
+              { key: 'water', label: 'Water' },
+              { key: 'wifi', label: 'Wi-Fi' },
+              { key: 'rentalEquipments', label: 'Rental Equipments' },
+            ].map((utility) => (
+              <View key={utility.key} style={styles.utilityRow}>
+                <ThemedText style={[styles.utilityLabel, { color: textColor }]}>
+                  {utility.label}
+                </ThemedText>
+                <View style={styles.utilityButtons}>
+                  <TouchableOpacity
+                    style={[
+                      styles.utilityButton,
+                      { borderColor, backgroundColor: inputBgColor },
+                      formData.utilities[utility.key as keyof typeof formData.utilities] === 'landlord' && {
+                        backgroundColor: primaryColor,
+                        borderColor: primaryColor,
+                      },
+                    ]}
+                    onPress={() => setFormData(prev => ({
+                      ...prev,
+                      utilities: {
+                        ...prev.utilities,
+                        [utility.key]: 'landlord',
+                      },
+                    }))}
+                  >
+                    <ThemedText style={[
+                      styles.utilityButtonText,
+                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'landlord' ? '#fff' : textColor },
+                    ]}>
+                      Landlord
+                    </ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.utilityButton,
+                      { borderColor, backgroundColor: inputBgColor },
+                      formData.utilities[utility.key as keyof typeof formData.utilities] === 'tenant' && {
+                        backgroundColor: primaryColor,
+                        borderColor: primaryColor,
+                      },
+                    ]}
+                    onPress={() => setFormData(prev => ({
+                      ...prev,
+                      utilities: {
+                        ...prev.utilities,
+                        [utility.key]: 'tenant',
+                      },
+                    }))}
+                  >
+                    <ThemedText style={[
+                      styles.utilityButtonText,
+                      { color: formData.utilities[utility.key as keyof typeof formData.utilities] === 'tenant' ? '#fff' : textColor },
+                    ]}>
+                      Tenant
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
         </ScrollView>
-
-        {/* Submit Button */}
-        <View style={[styles.footer, { borderTopColor: borderColor, paddingBottom: insets.bottom + 16 }]}>
-          <TouchableOpacity
-            style={[
-              styles.submitButton,
-              { backgroundColor: isSubmitting ? secondaryTextColor : primaryColor },
-            ]}
-            onPress={handleSubmit}
-            disabled={isSubmitting}
-          >
-            <ThemedText style={styles.submitButtonText}>
-              {isSubmitting ? 'Adding Property...' : 'Submit Property'}
-            </ThemedText>
-          </TouchableOpacity>
-        </View>
       </KeyboardAvoidingView>
+
+      {/* Submit Button */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: bgColor, borderTopColor: borderColor }]}>
+        <TouchableOpacity
+          style={[styles.submitButton, { backgroundColor: primaryColor }]}
+          onPress={handleSubmit}
+          disabled={isSubmitting}
+        >
+          <ThemedText style={styles.submitButtonText}>
+            {isSubmitting ? 'Submitting...' : 'Submit'}
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
     </ThemedView>
   );
 }
@@ -313,21 +600,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-  },
-  headerButton: {
-    width: 60,
-  },
-  cancelText: {
-    fontSize: 16,
-    fontWeight: '500',
   },
   headerTitle: {
     fontSize: 18,
     fontWeight: '700',
-    textAlign: 'center',
     flex: 1,
+    textAlign: 'center',
   },
   keyboardView: {
     flex: 1,
@@ -336,115 +616,205 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
-    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   section: {
     marginBottom: 24,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
-    marginBottom: 12,
-  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
+    marginBottom: 4,
   },
-  optionalText: {
+  sectionSubtitle: {
     fontSize: 14,
-    fontWeight: '500',
+    marginBottom: 16,
   },
   inputGroup: {
-    marginBottom: 12,
+    marginBottom: 16,
   },
   label: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
     marginBottom: 8,
   },
   input: {
-    height: 52,
+    height: 48,
+    paddingHorizontal: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 15,
+    fontSize: 16,
+  },
+  textArea: {
+    minHeight: 100,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 16,
   },
   row: {
     flexDirection: 'row',
     gap: 12,
+    marginBottom: 16,
   },
-  halfWidth: {
-    flex: 1,
-  },
-  photoUploadArea: {
-    height: 180,
-    borderWidth: 2,
-    borderStyle: 'dashed',
+  suggestionsContainer: {
+    marginTop: 4,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  uploadText: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: 8,
-  },
-  uploadSubtext: {
-    fontSize: 13,
-  },
-  photoContainer: {
-    position: 'relative',
-    borderRadius: 12,
+    borderWidth: 1,
     overflow: 'hidden',
   },
-  photoPreview: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-  },
-  removePhotoButton: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  changePhotoButton: {
-    position: 'absolute',
-    bottom: 10,
-    right: 10,
+  suggestionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+    borderBottomWidth: 1,
   },
-  changePhotoText: {
-    color: 'white',
+  suggestionText: {
+    fontSize: 14,
+    flex: 1,
+  },
+  radioGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  radioButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    minWidth: '48%',
+    flex: 1,
+  },
+  radioCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    marginRight: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  radioCircleInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  radioLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxLabel: {
+    fontSize: 14,
+    flex: 1,
+  },
+  photosGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  photoItem: {
+    width: 100,
+    height: 100,
+    position: 'relative',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
+  },
+  photoRemove: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+  },
+  photoAdd: {
+    width: 100,
+    height: 100,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  currencyInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  currencySymbol: {
+    position: 'absolute',
+    left: 16,
+    fontSize: 16,
+    fontWeight: '600',
+    zIndex: 1,
+  },
+  currencyInput: {
+    flex: 1,
+    height: 48,
+    paddingLeft: 36,
+    paddingRight: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 16,
+  },
+  utilityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  utilityLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  utilityButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  utilityButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  utilityButtonText: {
     fontSize: 13,
     fontWeight: '600',
   },
   footer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
     borderTopWidth: 1,
   },
   submitButton: {
-    height: 52,
+    height: 56,
     borderRadius: 12,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
   submitButtonText: {
-    color: 'white',
+    color: '#fff',
     fontSize: 16,
     fontWeight: '700',
   },
 });
-

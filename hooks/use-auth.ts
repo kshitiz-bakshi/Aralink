@@ -1,14 +1,46 @@
-import { useContext, useState, useEffect } from 'react';
-import { AuthContext } from '@/context/auth-context';
+import { useAuthStore, useIsAuthenticated, useUserRole, UserRole, AuthUser } from '@/store/authStore';
 
+// Re-export the auth store hooks for backwards compatibility
+export { useAuthStore, useIsAuthenticated, useUserRole };
+export type { UserRole, AuthUser };
+
+// Main hook for using auth in components
 export function useAuth() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const {
+    user,
+    session,
+    isLoading,
+    isInitialized,
+    error,
+    signIn,
+    signUp,
+    signOut,
+    signInWithGoogle,
+    signInWithApple,
+    signInWithFacebook,
+    updateUserRole,
+    resetPassword,
+    clearError,
+  } = useAuthStore();
 
-  useEffect(() => {
-    // TODO: Initialize auth from AsyncStorage or Supabase session
-    setLoading(false);
-  }, []);
-
-  return { user, loading };
+  return {
+    // State
+    user,
+    session,
+    isLoading,
+    isInitialized,
+    isAuthenticated: !!user,
+    error,
+    
+    // Actions
+    signIn,
+    signUp,
+    signOut,
+    signInWithGoogle,
+    signInWithApple,
+    signInWithFacebook,
+    updateUserRole,
+    resetPassword,
+    clearError,
+  };
 }

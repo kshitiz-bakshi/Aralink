@@ -7,43 +7,15 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-
-interface Tenant {
-  id: string;
-  name: string;
-  unit: string;
-  status: 'active' | 'inactive';
-  image: string;
-}
-
-const MOCK_TENANTS: Tenant[] = [
-  {
-    id: '1',
-    name: 'Eleanor Vance',
-    unit: 'Unit 12B, 456 Maple St',
-    status: 'active',
-    image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBimC0DGZ9eLx_JiDG8qtkl4_7Dx9YxYYCLJAT-di2VJ5Xg7KWygPlq6_JcJUDg_hiUAaGJIuaLAid6zA5NxT9Y-LKbakem7YGEp4YkicGUDquJPbUgaeHfzPck4vZp109rwX_Pgv6t7AfMScu2hEarvhQWV5U4dL9kWXnKlpoUegQIPjTLUC6dR-Fxbxu4Gf2DioBmb6k2BM5wGyyqWL4THX4_ZTMaEiflIlCcTaJjvw03AvQ9-JmlQoaQwThdsP4QQkni4nrt38b1',
-  },
-  {
-    id: '2',
-    name: 'Marcus Holloway',
-    unit: 'Apt 3, 789 Oak Ave',
-    status: 'active',
-    image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuD5tDcABIratjNifjgW0pdkdJ2_vLNBek_0fkXIb9oLefg698eDGKwbXq_6F9mKtoxo8f3KQNwrAUc5jaD6WU-xOQaUfSZKsDLpKjyCpcxXNOv42k-5fOh4ShULx_oGKaYHKV8NxzoHDLRYnINpQR2G4ztCAr-Fhjnk7C7e8cabIdfsTc6uI2-2RydqAnEs_qCSzsBrXyt1eVUa_9OBcqLRSDi5sf-VW-jni_auEiLpSJJq26odJh89ksP0OZQ_A2df0mbUXR6X6wDi',
-  },
-  {
-    id: '3',
-    name: 'Clara Oswald',
-    unit: 'Unit 5, 101 Pine Ln',
-    status: 'inactive',
-    image: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCdx3bgQ18SIagIbQFmcJwJOoawA4am_im631qWybxw3tGTiUsrQ-IRxoLue3t1sCyyA6Nc1Irly3pFlJHoeHAcMz_GveFXto8HwjMD264MKyP8MKZcMQRQtnfM0tZ-uq9sMY1g40dLimIMsV1DZn4v37DbqoaZD2b5mz0KjHBQBORoFpy-iWW-dtecsIONatIaDCPOzYqLuHhYUlf8dIMF1_Qm7J-AsZ7jgga8HV0KXrvYmlpG0v1AbiP3xrq4Uh1OdhjPfCtlWbSn',
-  },
-];
+import { useTenantStore } from '@/store/tenantStore';
+import { usePropertyStore } from '@/store/propertyStore';
 
 export default function TenantsScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { tenants } = useTenantStore();
+  const { getPropertyById } = usePropertyStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
 
@@ -56,18 +28,41 @@ export default function TenantsScreen() {
   const primaryColor = '#005a9c';
   const successColor = '#28a745';
 
-  const filteredTenants = MOCK_TENANTS.filter((t) => {
-    const matchSearch = t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  // Transform tenants for display
+  const displayTenants = tenants.map(tenant => {
+    const property = getPropertyById(tenant.propertyId);
+    return {
+      id: tenant.id,
+      name: `${tenant.firstName} ${tenant.lastName}`,
+      unit: tenant.unitName 
+        ? `${tenant.unitName}, ${property ? property.streetAddress : 'Unknown'}`
+        : property ? property.streetAddress : 'Unknown',
+      status: tenant.status,
+      image: tenant.photo || 'https://via.placeholder.com/150',
+    };
+  });
+
+  const filteredTenants = displayTenants.filter((t) => {
+    const matchSearch = !searchQuery || 
+      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.unit.toLowerCase().includes(searchQuery.toLowerCase());
     const matchStatus = filterStatus === 'all' || t.status === filterStatus;
     return matchSearch && matchStatus;
   });
 
-  const TenantCard = ({ tenant }: { tenant: Tenant }) => {
+  interface DisplayTenant {
+    id: string;
+    name: string;
+    unit: string;
+    status: 'active' | 'inactive';
+    image: string;
+  }
+
+  const TenantCard = ({ tenant }: { tenant: DisplayTenant }) => {
     return (
       <TouchableOpacity
         style={[styles.tenantCard, { backgroundColor: cardBgColor }]}
-        onPress={() => router.push('/tenant-detail')}>
+        onPress={() => router.push(`/tenant-detail?id=${tenant.id}`)}>
         <View style={styles.tenantHeader}>
           <View style={styles.tenantLeft}>
             <Image source={{ uri: tenant.image }} style={styles.tenantAvatar} />
@@ -163,13 +158,27 @@ export default function TenantsScreen() {
 
       {/* Tenants List */}
       <ScrollView style={styles.listContainer} showsVerticalScrollIndicator={false}>
-        {filteredTenants.map((tenant) => (
-          <TenantCard key={tenant.id} tenant={tenant} />
-        ))}
+        {filteredTenants.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialCommunityIcons name="account-group-outline" size={64} color={secondaryTextColor} />
+            <ThemedText style={[styles.emptyTitle, { color: textColor }]}>
+              No tenants found
+            </ThemedText>
+            <ThemedText style={[styles.emptySubtitle, { color: secondaryTextColor }]}>
+              {searchQuery || filterStatus !== 'all'
+                ? 'Try adjusting your search or filters'
+                : 'Add your first tenant to get started'}
+            </ThemedText>
+          </View>
+        ) : (
+          filteredTenants.map((tenant) => (
+            <TenantCard key={tenant.id} tenant={tenant} />
+          ))
+        )}
       </ScrollView>
 
       {/* Floating Action Button */}
-      <TouchableOpacity style={[styles.fab, { backgroundColor: primaryColor }]} onPress={() => router.push('/tenant-detail')}>
+      <TouchableOpacity style={[styles.fab, { backgroundColor: primaryColor }]} onPress={() => router.push('/add-tenant')}>
         <MaterialCommunityIcons name="plus" size={28} color="white" />
       </TouchableOpacity>
     </ThemedView>

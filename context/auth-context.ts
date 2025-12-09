@@ -1,36 +1,41 @@
-import { User } from '@/types';
 import { createContext } from 'react';
 
-export interface OAuthResult {
-  success: boolean;
-  user?: {
-    id: string;
-    email?: string;
-    name?: string;
-    picture?: string;
-    provider: 'google' | 'apple' | 'facebook';
-  };
-  error?: string;
-}
+import { AuthUser, UserRole } from '@/store/authStore';
 
+// Legacy context type for backwards compatibility
+// New code should use useAuthStore directly from '@/store/authStore'
 export interface AuthContextType {
-  user: User | null;
+  user: AuthUser | null;
   loading: boolean;
-  socialLoginInProgress?: boolean;
-  selectedUserType?: 'landlord' | 'tenant' | 'manager' | null;
-  setSocialLoginInProgress?: (value: boolean) => void;
-  setSelectedUserType?: (type: 'landlord' | 'tenant' | 'manager' | null) => void;
-  loginWithGoogle?: () => Promise<OAuthResult>;
-  loginWithApple?: () => Promise<OAuthResult>;
-  loginWithFacebook?: () => Promise<OAuthResult>;
-  registerWithGoogle?: (userType: 'landlord' | 'tenant' | 'manager') => Promise<OAuthResult>;
-  registerWithApple?: (userType: 'landlord' | 'tenant' | 'manager') => Promise<OAuthResult>;
-  registerWithFacebook?: (userType: 'landlord' | 'tenant' | 'manager') => Promise<OAuthResult>;
+  isAuthenticated: boolean;
+  error: string | null;
+  
+  // Actions
+  signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signUp: (email: string, password: string, name: string, role: UserRole) => Promise<{ success: boolean; error?: string }>;
+  signOut: () => Promise<void>;
+  signInWithGoogle: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
+  signInWithApple: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
+  signInWithFacebook: (role?: UserRole) => Promise<{ success: boolean; error?: string }>;
+  updateUserRole: (role: UserRole) => Promise<{ success: boolean; error?: string }>;
+  resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
 }
 
+// Default context value - should not be used directly
+// Components should use useAuthStore hook instead
 export const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
-  socialLoginInProgress: false,
-  selectedUserType: null,
+  isAuthenticated: false,
+  error: null,
+  signIn: async () => ({ success: false, error: 'Not implemented' }),
+  signUp: async () => ({ success: false, error: 'Not implemented' }),
+  signOut: async () => {},
+  signInWithGoogle: async () => ({ success: false, error: 'Not implemented' }),
+  signInWithApple: async () => ({ success: false, error: 'Not implemented' }),
+  signInWithFacebook: async () => ({ success: false, error: 'Not implemented' }),
+  updateUserRole: async () => ({ success: false, error: 'Not implemented' }),
+  resetPassword: async () => ({ success: false, error: 'Not implemented' }),
 });
+
+export type { AuthUser, UserRole };
