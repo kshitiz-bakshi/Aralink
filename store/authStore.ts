@@ -227,8 +227,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (error) {
-        set({ isLoading: false, error: error.message });
-        return { success: false, error: error.message };
+        // Handle specific error cases
+        let errorMessage = error.message;
+        
+        // Check for duplicate email error
+        if (error.message.includes('User already registered') || 
+            error.message.includes('already been registered') ||
+            error.message.includes('already exists')) {
+          errorMessage = 'An account with this email already exists. Please login instead.';
+        }
+        
+        set({ isLoading: false, error: errorMessage });
+        return { success: false, error: errorMessage };
+      }
+
+      // Supabase returns a user even for existing emails with email confirmation disabled
+      // Check if user.identities is empty (indicates user already exists)
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        const errorMessage = 'An account with this email already exists. Please login instead.';
+        set({ isLoading: false, error: errorMessage });
+        return { success: false, error: errorMessage };
       }
 
       if (data.user) {

@@ -89,11 +89,12 @@ export default function RootLayout() {
           <Stack.Screen name="applicant-detail" options={{ presentation: 'modal' }} />
           <Stack.Screen name="invoice-detail" options={{ presentation: 'modal' }} />
           
-          {/* Add Property/Unit/Room/Tenant Routes */}
+          {/* Add Property/Unit/Room/Tenant/Transaction Routes */}
           <Stack.Screen name="add-property" options={{ presentation: 'modal' }} />
           <Stack.Screen name="add-unit" options={{ presentation: 'modal' }} />
           <Stack.Screen name="add-room" options={{ presentation: 'modal' }} />
           <Stack.Screen name="add-tenant" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="add-transaction" options={{ presentation: 'modal' }} />
           
           {/* Lease Application Routes */}
           <Stack.Screen name="tenant-lease-start" />

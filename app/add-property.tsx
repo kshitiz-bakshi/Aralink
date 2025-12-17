@@ -3,9 +3,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -18,6 +20,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 
 export default function AddPropertyScreen() {
@@ -25,6 +29,7 @@ export default function AddPropertyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { addProperty } = usePropertyStore();
+  const { user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#f6f7f8';
@@ -111,7 +116,7 @@ export default function AddPropertyScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: true,
         quality: 0.8,
       });
@@ -133,7 +138,7 @@ export default function AddPropertyScreen() {
     }));
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     // Validation
     if (!formData.address1.trim()) {
       Alert.alert('Error', 'Please enter an address');
@@ -147,7 +152,28 @@ export default function AddPropertyScreen() {
     setIsSubmitting(true);
     
     try {
-      addProperty({
+      // Upload images to Supabase Storage if any
+      let uploadedPhotoUrls: string[] = [];
+      if (formData.photos.length > 0 && user?.id) {
+        // Filter out already-uploaded URLs (they start with http)
+        const localPhotos = formData.photos.filter(uri => !uri.startsWith('http'));
+        const existingUrls = formData.photos.filter(uri => uri.startsWith('http'));
+        
+        if (localPhotos.length > 0) {
+          const folder = `properties/${user.id}`;
+          uploadedPhotoUrls = await uploadMultipleImages(
+            localPhotos, 
+            STORAGE_BUCKETS.PROPERTY_IMAGES, 
+            folder
+          );
+        }
+        
+        // Combine existing URLs with newly uploaded ones
+        uploadedPhotoUrls = [...existingUrls, ...uploadedPhotoUrls];
+      }
+
+      // Pass the user ID to save to Supabase
+      await addProperty({
         location: formData.location || `${formData.city}, ${formData.state}`,
         address1: formData.address1,
         address2: formData.address2 || undefined,
@@ -160,16 +186,17 @@ export default function AddPropertyScreen() {
         landlordName: formData.landlordName || undefined,
         rentCompleteProperty: formData.propertyType !== 'multi_unit' ? formData.rentCompleteProperty : undefined,
         description: formData.description || undefined,
-        photos: formData.photos.length > 0 ? formData.photos : undefined,
+        photos: uploadedPhotoUrls.length > 0 ? uploadedPhotoUrls : undefined,
         parkingIncluded: formData.propertyType !== 'multi_unit' ? formData.parkingIncluded : undefined,
         rentAmount: formData.propertyType !== 'multi_unit' && formData.rentAmount 
           ? parseFloat(formData.rentAmount) 
           : undefined,
         utilities: formData.utilities,
-      });
+      }, user?.id);
       
       router.back();
     } catch (error) {
+      console.error('Error adding property:', error);
       Alert.alert('Error', 'Failed to add property. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -578,15 +605,35 @@ export default function AddPropertyScreen() {
       {/* Submit Button */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: bgColor, borderTopColor: borderColor }]}>
         <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: primaryColor }]}
+          style={[styles.submitButton, { backgroundColor: primaryColor, opacity: isSubmitting ? 0.7 : 1 }]}
           onPress={handleSubmit}
           disabled={isSubmitting}
         >
-          <ThemedText style={styles.submitButtonText}>
-            {isSubmitting ? 'Submitting...' : 'Submit'}
-          </ThemedText>
+          {isSubmitting ? (
+            <View style={styles.submitButtonContent}>
+              <ActivityIndicator size="small" color="#fff" />
+              <ThemedText style={styles.submitButtonText}>Saving Property...</ThemedText>
+            </View>
+          ) : (
+            <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
+          )}
         </TouchableOpacity>
       </View>
+
+      {/* Loading Overlay */}
+      <Modal visible={isSubmitting} transparent animationType="fade">
+        <View style={styles.loadingOverlay}>
+          <View style={[styles.loadingCard, { backgroundColor: cardBgColor }]}>
+            <ActivityIndicator size="large" color={primaryColor} />
+            <ThemedText style={[styles.loadingText, { color: textColor }]}>
+              Saving property...
+            </ThemedText>
+            <ThemedText style={[styles.loadingSubtext, { color: secondaryTextColor }]}>
+              {formData.photos.length > 0 ? 'Uploading images...' : 'Please wait'}
+            </ThemedText>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -812,9 +859,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  submitButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   submitButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingCard: {
+    padding: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  loadingSubtext: {
+    fontSize: 14,
   },
 });

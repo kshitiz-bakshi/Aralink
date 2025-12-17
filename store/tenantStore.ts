@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 
+import {
+  createTenant as createTenantInDb,
+  DbTenant,
+  deleteTenantFromDb,
+  fetchTenants,
+  updateTenantInDb,
+} from '@/lib/supabase';
+
 export interface Tenant {
   id: string;
   firstName: string;
@@ -26,19 +34,60 @@ export interface Tenant {
 
 interface TenantStore {
   tenants: Tenant[];
+  isLoading: boolean;
+  isSynced: boolean;
+  error: string | null;
   
   // Actions
-  addTenant: (tenant: Omit<Tenant, 'id' | 'createdAt' | 'status'>) => string;
-  updateTenant: (id: string, updates: Partial<Tenant>) => void;
-  deleteTenant: (id: string) => void;
+  loadFromSupabase: (userId: string) => Promise<void>;
+  addTenant: (tenant: Omit<Tenant, 'id' | 'createdAt' | 'status'>, userId?: string) => Promise<string>;
+  updateTenant: (id: string, updates: Partial<Tenant>) => Promise<void>;
+  deleteTenant: (id: string) => Promise<void>;
   getTenantById: (id: string) => Tenant | undefined;
   getTenantsByProperty: (propertyId: string) => Tenant[];
 }
 
-// Generate unique ID
+// Generate unique ID (fallback for local)
 const generateId = () => Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
 
-// Mock initial data
+// Convert DB tenant to local format
+const dbToLocalTenant = (dbTenant: DbTenant): Tenant => ({
+  id: dbTenant.id,
+  firstName: dbTenant.first_name,
+  lastName: dbTenant.last_name,
+  email: dbTenant.email,
+  phone: dbTenant.phone,
+  propertyId: dbTenant.property_id,
+  unitId: dbTenant.unit_id,
+  unitName: dbTenant.unit_name,
+  photo: dbTenant.photo,
+  startDate: dbTenant.start_date,
+  endDate: dbTenant.end_date,
+  rentAmount: dbTenant.rent_amount,
+  status: dbTenant.status,
+  createdAt: dbTenant.created_at,
+  payments: dbTenant.payments,
+});
+
+// Convert local tenant to DB format
+const localToDbTenant = (tenant: Partial<Tenant>, userId: string): Partial<DbTenant> => ({
+  user_id: userId,
+  first_name: tenant.firstName || '',
+  last_name: tenant.lastName || '',
+  email: tenant.email || '',
+  phone: tenant.phone || '',
+  property_id: tenant.propertyId || '',
+  unit_id: tenant.unitId,
+  unit_name: tenant.unitName,
+  photo: tenant.photo,
+  start_date: tenant.startDate,
+  end_date: tenant.endDate,
+  rent_amount: tenant.rentAmount,
+  status: tenant.status || 'active',
+  payments: tenant.payments,
+});
+
+// Mock initial data (used as fallback)
 const INITIAL_TENANTS: Tenant[] = [
   {
     id: '1',
@@ -98,8 +147,63 @@ const INITIAL_TENANTS: Tenant[] = [
 
 export const useTenantStore = create<TenantStore>((set, get) => ({
   tenants: INITIAL_TENANTS,
+  isLoading: false,
+  isSynced: false,
+  error: null,
   
-  addTenant: (tenantData) => {
+  // Load tenants from Supabase
+  loadFromSupabase: async (userId: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      
+      const dbTenants = await fetchTenants(userId);
+      
+      if (dbTenants.length > 0) {
+        const tenants = dbTenants.map(dbToLocalTenant);
+        set({ tenants, isLoading: false, isSynced: true });
+      } else {
+        // No tenants in database, keep local data
+        set({ isLoading: false, isSynced: true });
+      }
+    } catch (error) {
+      console.error('Error loading tenants from Supabase:', error);
+      set({ isLoading: false, error: 'Failed to load tenants' });
+    }
+  },
+  
+  addTenant: async (tenantData, userId) => {
+    // Try to save to Supabase if userId is provided
+    if (userId) {
+      try {
+        set({ isLoading: true });
+        
+        const dbTenantData = localToDbTenant({
+          ...tenantData,
+          payments: tenantData.payments || {
+            rent: { paid: 0, total: tenantData.rentAmount || 0, percentage: 0 },
+            maintenance: { paid: 0, total: 0, percentage: 0 },
+            utility: { paid: 0, total: 0, percentage: 0 },
+            other: { paid: 0, total: 0, percentage: 0 },
+          },
+        }, userId);
+        
+        const savedTenant = await createTenantInDb(dbTenantData as any);
+        
+        if (savedTenant) {
+          // Refresh list from API
+          await get().loadFromSupabase(userId);
+          set({ isLoading: false });
+          return savedTenant.id;
+        }
+        
+        set({ isLoading: false });
+      } catch (error) {
+        console.error('Error saving tenant to Supabase:', error);
+        set({ isLoading: false });
+      }
+    }
+    
+    // Fallback: Add locally
     const id = generateId();
     const newTenant: Tenant = {
       ...tenantData,
@@ -117,18 +221,48 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     return id;
   },
   
-  updateTenant: (id, updates) => {
+  updateTenant: async (id, updates) => {
+    // Update local state first
     set((state) => ({
       tenants: state.tenants.map((t) =>
         t.id === id ? { ...t, ...updates } : t
       ),
     }));
+    
+    // Try to update in Supabase
+    try {
+      await updateTenantInDb(id, {
+        first_name: updates.firstName,
+        last_name: updates.lastName,
+        email: updates.email,
+        phone: updates.phone,
+        property_id: updates.propertyId,
+        unit_id: updates.unitId,
+        unit_name: updates.unitName,
+        photo: updates.photo,
+        start_date: updates.startDate,
+        end_date: updates.endDate,
+        rent_amount: updates.rentAmount,
+        status: updates.status,
+        payments: updates.payments,
+      } as any);
+    } catch (error) {
+      console.error('Error updating tenant in Supabase:', error);
+    }
   },
   
-  deleteTenant: (id) => {
+  deleteTenant: async (id) => {
+    // Update local state first
     set((state) => ({
       tenants: state.tenants.filter((t) => t.id !== id),
     }));
+    
+    // Try to delete from Supabase
+    try {
+      await deleteTenantFromDb(id);
+    } catch (error) {
+      console.error('Error deleting tenant from Supabase:', error);
+    }
   },
   
   getTenantById: (id) => {
@@ -139,4 +273,3 @@ export const useTenantStore = create<TenantStore>((set, get) => ({
     return get().tenants.filter((t) => t.propertyId === propertyId);
   },
 }));
-

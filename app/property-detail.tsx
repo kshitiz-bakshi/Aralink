@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   FlatList,
@@ -18,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -28,6 +30,7 @@ export default function PropertyDetailScreen() {
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   
+  const { user } = useAuthStore();
   const { 
     getPropertyById, 
     updateProperty, 
@@ -35,13 +38,18 @@ export default function PropertyDetailScreen() {
     addUnit, 
     deleteUnit,
     addRoomToSingleUnit,
+    loadFromSupabase,
   } = usePropertyStore();
 
   const [property, setProperty] = useState<Property | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
   const [showUnitModal, setShowUnitModal] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<SubUnit | null>(null);
+  const [showRoomModal, setShowRoomModal] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const imageScrollRef = useRef<FlatList>(null);
 
@@ -54,14 +62,30 @@ export default function PropertyDetailScreen() {
   const inputBgColor = isDark ? '#1a242d' : '#f9fafb';
   const primaryColor = '#137fec';
 
-  useEffect(() => {
-    if (id) {
+  // Load property from Supabase and local store
+  const loadProperty = useCallback(async () => {
+    if (!id) return;
+    setIsLoading(true);
+    try {
+      // If user is logged in, refresh from Supabase first
+      if (user?.id) {
+        await loadFromSupabase(user.id);
+      }
+      // Then get from local store (which is now synced)
       const fetchedProperty = getPropertyById(id);
       if (fetchedProperty) {
         setProperty(fetchedProperty);
       }
+    } catch (error) {
+      console.error('Error loading property:', error);
+    } finally {
+      setIsLoading(false);
     }
-  }, [id, getPropertyById]);
+  }, [id, user?.id, loadFromSupabase, getPropertyById]);
+
+  useEffect(() => {
+    loadProperty();
+  }, [loadProperty]);
 
   const refreshProperty = () => {
     if (id) {
@@ -120,8 +144,8 @@ export default function PropertyDetailScreen() {
   // Refresh when screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      refreshProperty();
-    }, [id])
+      loadProperty();
+    }, [loadProperty])
   );
 
   const handleRoomPress = (unit: Unit, subUnit: SubUnit) => {
@@ -142,7 +166,7 @@ export default function PropertyDetailScreen() {
     router.push(`/add-room?propertyId=${property?.id}&unitId=${unitId}`);
   };
 
-  if (!property) {
+  if (isLoading || !property) {
     return (
       <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
         <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
@@ -153,9 +177,18 @@ export default function PropertyDetailScreen() {
           <View style={{ width: 24 }} />
         </View>
         <View style={styles.loadingContainer}>
+          {isLoading ? (
+            <>
+              <ActivityIndicator size="large" color={primaryColor} />
+              <ThemedText style={[styles.loadingText, { color: secondaryTextColor }]}>
+                Loading property...
+              </ThemedText>
+            </>
+          ) : (
           <ThemedText style={[styles.loadingText, { color: secondaryTextColor }]}>
             Property not found
           </ThemedText>
+          )}
         </View>
       </ThemedView>
     );
@@ -179,28 +212,28 @@ export default function PropertyDetailScreen() {
         </TouchableOpacity>
         <ThemedText style={[styles.headerTitle, { color: textColor }]}>Property Details</ThemedText>
         <View style={styles.headerActions}>
-          {property && property.units.length > 0 && (
+          {!isEditMode && (
             <TouchableOpacity 
-              onPress={() => setIsEditMode(!isEditMode)}
-              style={[styles.editButton, { backgroundColor: isEditMode ? primaryColor : 'transparent' }]}
+              onPress={() => setIsEditMode(true)}
+              style={[styles.editButton, { backgroundColor: 'transparent' }]}
             >
               <MaterialCommunityIcons 
-                name={isEditMode ? "check" : "pencil"} 
+                name="pencil" 
                 size={20} 
-                color={isEditMode ? '#fff' : textColor} 
+                color={textColor} 
               />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={handleDeleteProperty}>
+        <TouchableOpacity onPress={handleDeleteProperty}>
             <MaterialCommunityIcons name="dots-horizontal" size={24} color={textColor} />
-          </TouchableOpacity>
+        </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView 
         ref={scrollViewRef}
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: isEditMode ? insets.bottom + 100 : insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Property Name and Location */}
@@ -245,7 +278,7 @@ export default function PropertyDetailScreen() {
                     ]}
                   />
                 ))}
-              </View>
+            </View>
             )}
           </View>
         )}
@@ -265,15 +298,16 @@ export default function PropertyDetailScreen() {
               {property.address2 ? `, ${property.address2}` : ''}, {property.city}, {property.state} {property.zipCode}
             </ThemedText>
           </View>
-        </View>
+          </View>
 
         {/* Rental Setup */}
-        <View style={styles.section}>
+        <View style={[styles.section, !isEditMode && styles.readOnlySection]}>
           <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Rental Setup</ThemedText>
           <View style={styles.radioGroup}>
             <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => handleUpdateProperty({ propertyType: 'single_unit' })}
+              style={[styles.radioOption, !isEditMode && styles.disabledOption]}
+              onPress={() => isEditMode && handleUpdateProperty({ propertyType: 'single_unit' })}
+              disabled={!isEditMode}
             >
               <View style={[
                 styles.radioButton,
@@ -286,8 +320,9 @@ export default function PropertyDetailScreen() {
               <ThemedText style={[styles.radioLabel, { color: textColor }]}>Single Unit</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => handleUpdateProperty({ propertyType: 'multi_unit' })}
+              style={[styles.radioOption, !isEditMode && styles.disabledOption]}
+              onPress={() => isEditMode && handleUpdateProperty({ propertyType: 'multi_unit' })}
+              disabled={!isEditMode}
             >
               <View style={[
                 styles.radioButton,
@@ -300,8 +335,9 @@ export default function PropertyDetailScreen() {
               <ThemedText style={[styles.radioLabel, { color: textColor }]}>Multi-Unit</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => handleUpdateProperty({ propertyType: 'commercial' })}
+              style={[styles.radioOption, !isEditMode && styles.disabledOption]}
+              onPress={() => isEditMode && handleUpdateProperty({ propertyType: 'commercial' })}
+              disabled={!isEditMode}
             >
               <View style={[
                 styles.radioButton,
@@ -310,12 +346,13 @@ export default function PropertyDetailScreen() {
                 {property.propertyType === 'commercial' && (
                   <View style={[styles.radioDot, { backgroundColor: primaryColor }]} />
                 )}
-              </View>
+            </View>
               <ThemedText style={[styles.radioLabel, { color: textColor }]}>Commercial</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.radioOption}
-              onPress={() => handleUpdateProperty({ propertyType: 'parking' })}
+              style={[styles.radioOption, !isEditMode && styles.disabledOption]}
+              onPress={() => isEditMode && handleUpdateProperty({ propertyType: 'parking' })}
+              disabled={!isEditMode}
             >
               <View style={[
                 styles.radioButton,
@@ -327,15 +364,15 @@ export default function PropertyDetailScreen() {
               </View>
               <ThemedText style={[styles.radioLabel, { color: textColor }]}>Parking</ThemedText>
             </TouchableOpacity>
-          </View>
-        </View>
+              </View>
+            </View>
 
         {/* Utilities Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, !isEditMode && styles.readOnlySection]}>
           <ThemedText style={[styles.sectionTitle, { color: textColor }]}>Utilities</ThemedText>
           <ThemedText style={[styles.inputLabel, { color: secondaryTextColor, marginBottom: 12 }]}>
             Who pays for each utility?
-          </ThemedText>
+                </ThemedText>
           {[
             { key: 'electricity', label: 'Electricity' },
             { key: 'heatGas', label: 'Heat / Gas' },
@@ -356,8 +393,9 @@ export default function PropertyDetailScreen() {
                       backgroundColor: primaryColor,
                       borderColor: primaryColor,
                     },
+                    !isEditMode && styles.disabledButton,
                   ]}
-                  onPress={() => handleUpdateProperty({
+                  onPress={() => isEditMode && handleUpdateProperty({
                     utilities: {
                       ...(property.utilities || {
                         electricity: 'landlord',
@@ -369,6 +407,7 @@ export default function PropertyDetailScreen() {
                       [utility.key]: 'landlord',
                     }
                   })}
+                  disabled={!isEditMode}
                 >
                   <ThemedText style={[
                     styles.utilityButtonText,
@@ -385,8 +424,9 @@ export default function PropertyDetailScreen() {
                       backgroundColor: primaryColor,
                       borderColor: primaryColor,
                     },
+                    !isEditMode && styles.disabledButton,
                   ]}
-                  onPress={() => handleUpdateProperty({
+                  onPress={() => isEditMode && handleUpdateProperty({
                     utilities: {
                       ...(property.utilities || {
                         electricity: 'landlord',
@@ -398,6 +438,7 @@ export default function PropertyDetailScreen() {
                       [utility.key]: 'tenant',
                     }
                   })}
+                  disabled={!isEditMode}
                 >
                   <ThemedText style={[
                     styles.utilityButtonText,
@@ -424,9 +465,9 @@ export default function PropertyDetailScreen() {
               <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
               <ThemedText style={[styles.addButtonText, { color: primaryColor }]}>
                 {property.propertyType === 'single_unit' ? 'Add Room' : 'Add Unit'}
-              </ThemedText>
+          </ThemedText>
             </TouchableOpacity>
-          </View>
+        </View>
 
           {property.propertyType === 'single_unit' ? (
             // Single Unit - Show Rooms
@@ -436,13 +477,17 @@ export default function PropertyDetailScreen() {
                   <MaterialCommunityIcons name="door-open" size={48} color={secondaryTextColor} />
                   <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
                     No rooms added yet
-                  </ThemedText>
-                </View>
+              </ThemedText>
+            </View>
               ) : (
                 rooms.map((room) => (
-                  <View
+            <TouchableOpacity 
                     key={room.id}
                     style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                    onPress={() => {
+                      setSelectedRoom(room);
+                      setShowRoomModal(true);
+                    }}
                   >
                     <View style={styles.roomInfo}>
                       <ThemedText style={[styles.roomName, { color: textColor }]}>
@@ -453,63 +498,55 @@ export default function PropertyDetailScreen() {
                         {room.tenantName && ` - ${room.tenantName}`}
                       </ThemedText>
                     </View>
-                    {isEditMode && (
-                      <TouchableOpacity
-                        onPress={() => handleRoomPress(property.units[0], room)}
-                      >
-                        <MaterialCommunityIcons name="pencil" size={20} color={primaryColor} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
+            </TouchableOpacity>
                 ))
               )}
-            </View>
+          </View>
           ) : (
             // Multi-Unit - Show Units
             <View style={styles.unitsList}>
-              {property.units.length === 0 ? (
+          {property.units.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <MaterialCommunityIcons name="home-plus-outline" size={48} color={secondaryTextColor} />
-                  <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
-                    No units added yet
-                  </ThemedText>
-                </View>
-              ) : (
-                property.units.map((unit) => (
+              <MaterialCommunityIcons name="home-plus-outline" size={48} color={secondaryTextColor} />
+              <ThemedText style={[styles.emptyText, { color: secondaryTextColor }]}>
+                No units added yet
+              </ThemedText>
+            </View>
+          ) : (
+            property.units.map((unit) => (
                   <View
                     key={unit.id}
                     style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
                   >
-                    <TouchableOpacity
+                <TouchableOpacity 
                       style={styles.roomInfoContainer}
                       onPress={() => handleUnitPress(unit)}
                     >
                       <View style={styles.roomInfo}>
                         <ThemedText style={[styles.roomName, { color: textColor }]}>
-                          {unit.name}
-                        </ThemedText>
+                        {unit.name}
+                      </ThemedText>
                         <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]}>
                           {unit.subUnits.length} room{unit.subUnits.length !== 1 ? 's' : ''}
                           {unit.isOccupied ? ' • Occupied' : ' • Vacant'}
                         </ThemedText>
                       </View>
                       <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
+                  </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.addRoomButton, { backgroundColor: `${primaryColor}20` }]}
+                      onPress={() => handleAddRoomToUnit(unit.id)}
+                    >
+                      <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
+                      <ThemedText style={[styles.addRoomButtonText, { color: primaryColor }]}>
+                        Add Room
+                      </ThemedText>
                     </TouchableOpacity>
-                    {isEditMode && (
-                      <TouchableOpacity
-                        style={[styles.addRoomButton, { backgroundColor: `${primaryColor}20` }]}
-                        onPress={() => handleAddRoomToUnit(unit.id)}
-                      >
-                        <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
-                        <ThemedText style={[styles.addRoomButtonText, { color: primaryColor }]}>
-                          Add Room
-                        </ThemedText>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 ))
-              )}
-            </View>
+                )}
+              </View>
           )}
         </View>
 
@@ -529,7 +566,7 @@ export default function PropertyDetailScreen() {
             <View style={styles.modalHeader}>
               <ThemedText style={[styles.modalTitle, { color: textColor }]}>
                 {selectedUnit?.name}
-              </ThemedText>
+            </ThemedText>
               <TouchableOpacity onPress={() => setShowUnitModal(false)}>
                 <MaterialCommunityIcons name="close" size={24} color={textColor} />
               </TouchableOpacity>
@@ -537,6 +574,26 @@ export default function PropertyDetailScreen() {
             
             {selectedUnit && (
               <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                {/* Unit Photos */}
+                {selectedUnit.photos && selectedUnit.photos.length > 0 && (
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Photos</ThemedText>
+                    <ScrollView 
+                      horizontal 
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.modalPhotosScroll}
+                    >
+                      {selectedUnit.photos.map((photo, index) => (
+                        <Image 
+                          key={index}
+                          source={{ uri: photo }} 
+                          style={styles.modalPhoto}
+                        />
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
                 <View style={styles.modalSection}>
                   <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Details</ThemedText>
                   <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
@@ -568,14 +625,15 @@ export default function PropertyDetailScreen() {
                     <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>
                       Rooms ({selectedUnit.subUnits.length})
                     </ThemedText>
-                    {isEditMode && (
-                      <TouchableOpacity
-                        style={[styles.modalAddButton, { backgroundColor: `${primaryColor}20` }]}
-                        onPress={() => handleAddRoomToUnit(selectedUnit.id)}
-                      >
-                        <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
-                      </TouchableOpacity>
-                    )}
+              <TouchableOpacity 
+                      style={[styles.modalAddButton, { backgroundColor: `${primaryColor}20` }]}
+                      onPress={() => handleAddRoomToUnit(selectedUnit.id)}
+              >
+                      <MaterialCommunityIcons name="plus" size={16} color={primaryColor} />
+                      <ThemedText style={[styles.modalAddButtonText, { color: primaryColor }]}>
+                        Add Room
+                      </ThemedText>
+              </TouchableOpacity>
                   </View>
                   {selectedUnit.subUnits.length === 0 ? (
                     <View style={styles.modalEmptyState}>
@@ -586,33 +644,223 @@ export default function PropertyDetailScreen() {
                     </View>
                   ) : (
                     selectedUnit.subUnits.map((room) => (
-                      <TouchableOpacity
+              <TouchableOpacity 
                         key={room.id}
                         style={[styles.modalRoomItem, { backgroundColor: isDark ? '#1a242d' : '#f9fafb', borderColor }]}
                         onPress={() => {
                           setShowUnitModal(false);
-                          if (isEditMode) {
-                            handleRoomPress(selectedUnit, room);
-                          }
+                          setSelectedRoom(room);
+                          setShowRoomModal(true);
                         }}
                       >
-                        <ThemedText style={[styles.modalRoomName, { color: textColor }]}>
-                          {room.name}
-                        </ThemedText>
-                        {room.rentPrice && (
-                          <ThemedText style={[styles.modalRoomRent, { color: secondaryTextColor }]}>
-                            ${room.rentPrice.toLocaleString()}/mo
+                        <View style={styles.modalRoomInfo}>
+                          <ThemedText style={[styles.modalRoomName, { color: textColor }]}>
+                            {room.name}
                           </ThemedText>
-                        )}
-                      </TouchableOpacity>
+                          {room.rentPrice && (
+                            <ThemedText style={[styles.modalRoomRent, { color: secondaryTextColor }]}>
+                              ${room.rentPrice.toLocaleString()}/mo
+                            </ThemedText>
+                          )}
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={20} color={secondaryTextColor} />
+              </TouchableOpacity>
                     ))
                   )}
-                </View>
+            </View>
               </ScrollView>
             )}
           </View>
         </View>
       </Modal>
+
+      {/* Room Detail Modal */}
+      <Modal
+        visible={showRoomModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRoomModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setShowRoomModal(false)} />
+          <View style={[styles.modalContent, { backgroundColor: cardBgColor }]}>
+            <View style={styles.modalHandle} />
+            <View style={styles.modalHeader}>
+              <ThemedText style={[styles.modalTitle, { color: textColor }]}>
+                {selectedRoom?.name || 'Room Details'}
+            </ThemedText>
+              <TouchableOpacity onPress={() => setShowRoomModal(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={textColor} />
+              </TouchableOpacity>
+            </View>
+            
+            {selectedRoom && (
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                {/* Room Photos */}
+                {selectedRoom.photos && selectedRoom.photos.length > 0 && (
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Photos</ThemedText>
+                    <ScrollView 
+                      horizontal 
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.modalPhotosScroll}
+                    >
+                      {selectedRoom.photos.map((photo, index) => (
+                        <Image 
+                          key={index}
+                          source={{ uri: photo }} 
+                          style={styles.modalPhoto}
+                        />
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                <View style={styles.modalSection}>
+                  <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Details</ThemedText>
+                  
+                  <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                    <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Type</ThemedText>
+                    <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                      {selectedRoom.type ? selectedRoom.type.charAt(0).toUpperCase() + selectedRoom.type.slice(1).replace('_', ' ') : 'Room'}
+                    </ThemedText>
+                  </View>
+
+                  {selectedRoom.rentPrice && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Rent</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        ${selectedRoom.rentPrice.toLocaleString()}/mo
+                      </ThemedText>
+                    </View>
+                  )}
+
+                  {selectedRoom.area && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Area</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        {selectedRoom.area} sq ft
+                      </ThemedText>
+                    </View>
+                  )}
+
+                  {selectedRoom.tenantName && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Tenant</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        {selectedRoom.tenantName}
+                      </ThemedText>
+                    </View>
+                  )}
+
+                  {selectedRoom.availabilityDate && (
+                    <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
+                      <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Available From</ThemedText>
+                      <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
+                        {new Date(selectedRoom.availabilityDate).toLocaleDateString()}
+                      </ThemedText>
+                    </View>
+                  )}
+                </View>
+
+                {/* Amenities */}
+                {selectedRoom.amenities && selectedRoom.amenities.length > 0 && (
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Amenities</ThemedText>
+                    <View style={styles.modalAmenitiesGrid}>
+                      {selectedRoom.amenities.map((amenity, index) => (
+                        <View 
+                          key={index} 
+                          style={[styles.modalAmenityTag, { backgroundColor: `${primaryColor}15` }]}
+                        >
+                          <MaterialCommunityIcons name="check-circle" size={14} color={primaryColor} />
+                          <ThemedText style={[styles.modalAmenityText, { color: textColor }]}>
+                            {amenity}
+                          </ThemedText>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Shared Spaces */}
+                {selectedRoom.sharedSpaces && selectedRoom.sharedSpaces.length > 0 && (
+                  <View style={styles.modalSection}>
+                    <ThemedText style={[styles.modalSectionTitle, { color: textColor }]}>Shared Spaces</ThemedText>
+                    <View style={styles.modalAmenitiesGrid}>
+                      {selectedRoom.sharedSpaces.map((space, index) => (
+                        <View 
+                          key={index} 
+                          style={[styles.modalAmenityTag, { backgroundColor: `${secondaryTextColor}15` }]}
+                        >
+                          <MaterialCommunityIcons name="home-group" size={14} color={secondaryTextColor} />
+                          <ThemedText style={[styles.modalAmenityText, { color: textColor }]}>
+                            {space}
+                  </ThemedText>
+                        </View>
+              ))}
+            </View>
+                  </View>
+                )}
+            
+                {/* Edit Button */}
+              <TouchableOpacity 
+                  style={[styles.modalEditButton, { backgroundColor: primaryColor }]}
+                onPress={() => { 
+                    setShowRoomModal(false);
+                    if (property && property.units.length > 0) {
+                      router.push(`/add-room?propertyId=${property.id}&unitId=${property.units[0].id}&roomId=${selectedRoom.id}`);
+                    }
+                  }}
+                >
+                  <MaterialCommunityIcons name="pencil" size={18} color="#fff" />
+                  <ThemedText style={styles.modalEditButtonText}>Edit Room</ThemedText>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Save Button Footer - Only shows in edit mode */}
+      {isEditMode && (
+        <View style={[styles.footer, { borderTopColor: borderColor, backgroundColor: bgColor, paddingBottom: insets.bottom + 16 }]}>
+          <TouchableOpacity
+            style={[styles.cancelButton, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}
+            onPress={() => {
+              setIsEditMode(false);
+              // Reload to discard unsaved changes
+              loadProperty();
+                }}
+              >
+                <ThemedText style={[styles.cancelButtonText, { color: textColor }]}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity 
+            style={[styles.saveButton, { backgroundColor: primaryColor, opacity: isSaving ? 0.7 : 1 }]}
+            onPress={async () => {
+              setIsSaving(true);
+              try {
+                // Changes are already saved via handleUpdateProperty
+                // Just reload from API to confirm sync
+                await loadProperty();
+                setIsEditMode(false);
+              } catch (error) {
+                console.error('Error saving changes:', error);
+                Alert.alert('Error', 'Failed to save changes. Please try again.');
+              } finally {
+                setIsSaving(false);
+              }
+            }}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <ThemedText style={styles.saveButtonText}>Save Changes</ThemedText>
+            )}
+              </TouchableOpacity>
+            </View>
+      )}
     </ThemedView>
   );
 }
@@ -927,11 +1175,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalAddButton: {
-    width: 32,
-    height: 32,
+    flexDirection: 'row',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 4,
+  },
+  modalAddButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   modalInfoRow: {
     flexDirection: 'row',
@@ -957,10 +1211,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   modalRoomItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
     marginBottom: 8,
+  },
+  modalRoomInfo: {
+    flex: 1,
   },
   modalRoomName: {
     fontSize: 14,
@@ -969,6 +1229,49 @@ const styles = StyleSheet.create({
   },
   modalRoomRent: {
     fontSize: 12,
+  },
+  modalPhotosScroll: {
+    marginTop: 8,
+  },
+  modalPhoto: {
+    width: 120,
+    height: 90,
+    borderRadius: 8,
+    marginRight: 8,
+    backgroundColor: '#e5e7eb',
+  },
+  modalAmenitiesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  modalAmenityTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  modalAmenityText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  modalEditButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginTop: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  modalEditButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   utilityRow: {
     flexDirection: 'row',
@@ -994,5 +1297,49 @@ const styles = StyleSheet.create({
   utilityButtonText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  // Edit mode styles
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    gap: 12,
+  },
+  saveButton: {
+    flex: 1,
+    height: 52,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  cancelButton: {
+    flex: 1,
+    height: 52,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  readOnlySection: {
+    opacity: 0.8,
+  },
+  disabledOption: {
+    opacity: 0.6,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });

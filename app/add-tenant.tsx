@@ -2,9 +2,11 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -18,6 +20,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { uploadImage, STORAGE_BUCKETS } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useTenantStore } from '@/store/tenantStore';
 
@@ -28,6 +32,7 @@ export default function AddTenantScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { properties } = usePropertyStore();
   const { addTenant, updateTenant, getTenantById } = useTenantStore();
+  const { user } = useAuthStore();
   
   const isEditing = !!id;
   const existingTenant = id ? getTenantById(id) : null;
@@ -81,7 +86,7 @@ export default function AddTenantScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaType.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
@@ -92,7 +97,7 @@ export default function AddTenantScreen() {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
       Alert.alert('Error', 'Please enter first and last name');
       return;
@@ -109,9 +114,23 @@ export default function AddTenantScreen() {
     setIsSubmitting(true);
     
     try {
+      // Upload photo to Supabase Storage if it's a local file
+      let photoUrl = formData.photo;
+      if (formData.photo && !formData.photo.startsWith('http') && user?.id) {
+        const folder = `tenants/${user.id}`;
+        const result = await uploadImage(
+          formData.photo, 
+          STORAGE_BUCKETS.TENANT_PHOTOS, 
+          folder
+        );
+        if (result.success && result.url) {
+          photoUrl = result.url;
+        }
+      }
+
       if (isEditing && id) {
         // Update existing tenant
-        updateTenant(id, {
+        await updateTenant(id, {
           firstName: formData.firstName.trim(),
           lastName: formData.lastName.trim(),
           email: formData.email.trim(),
@@ -120,11 +139,11 @@ export default function AddTenantScreen() {
           startDate: formData.startDate || undefined,
           endDate: formData.endDate || undefined,
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
-          photo: formData.photo || undefined,
+          photo: photoUrl || undefined,
         });
       } else {
         // Add new tenant
-        addTenant({
+        await addTenant({
           firstName: formData.firstName.trim(),
           lastName: formData.lastName.trim(),
           email: formData.email.trim(),
@@ -133,12 +152,13 @@ export default function AddTenantScreen() {
           startDate: formData.startDate || undefined,
           endDate: formData.endDate || undefined,
           rentAmount: formData.rentAmount ? parseFloat(formData.rentAmount) : undefined,
-          photo: formData.photo || undefined,
-        });
+          photo: photoUrl || undefined,
+        }, user?.id);
       }
       
       router.back();
     } catch (error) {
+      console.error('Error saving tenant:', error);
       Alert.alert('Error', 'Failed to save tenant. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -321,13 +341,35 @@ export default function AddTenantScreen() {
       {/* Footer Submit Button */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor }]}>
         <TouchableOpacity
-          style={[styles.submitButton, { backgroundColor: primaryColor }]}
+          style={[styles.submitButton, { backgroundColor: primaryColor, opacity: isSubmitting ? 0.7 : 1 }]}
           onPress={handleSubmit}
           disabled={isSubmitting}
         >
-          <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
+          {isSubmitting ? (
+            <View style={styles.submitButtonContent}>
+              <ActivityIndicator size="small" color="#fff" />
+              <ThemedText style={styles.submitButtonText}>Saving...</ThemedText>
+            </View>
+          ) : (
+            <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
+          )}
         </TouchableOpacity>
       </View>
+
+      {/* Loading Overlay */}
+      <Modal visible={isSubmitting} transparent animationType="fade">
+        <View style={styles.loadingOverlay}>
+          <View style={[styles.loadingCard, { backgroundColor: cardBgColor }]}>
+            <ActivityIndicator size="large" color={primaryColor} />
+            <ThemedText style={[styles.loadingText, { color: textColor }]}>
+              Saving tenant...
+            </ThemedText>
+            <ThemedText style={[styles.loadingSubtext, { color: secondaryTextColor }]}>
+              {formData.photo ? 'Uploading photo...' : 'Please wait'}
+            </ThemedText>
+          </View>
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -465,10 +507,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  submitButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   submitButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingCard: {
+    padding: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    gap: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  loadingSubtext: {
+    fontSize: 14,
   },
 });
 

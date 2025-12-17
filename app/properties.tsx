@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   StyleSheet, 
   ScrollView, 
@@ -8,6 +8,7 @@ import {
   Image,
   Modal,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -16,6 +17,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore, Property } from '@/store/propertyStore';
 
 export default function PropertiesScreen() {
@@ -25,6 +27,9 @@ export default function PropertiesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilterModal, setShowFilterModal] = useState(false);
 
+  // Get user from auth store
+  const { user } = useAuthStore();
+
   // Get properties and filter state from store
   const { 
     properties, 
@@ -32,7 +37,16 @@ export default function PropertiesScreen() {
     togglePropertySelection, 
     clearPropertySelection,
     setSelectedPropertyIds,
+    loadFromSupabase,
+    isLoading,
   } = usePropertyStore();
+
+  // Load properties from API on mount
+  useEffect(() => {
+    if (user?.id) {
+      loadFromSupabase(user.id);
+    }
+  }, [user?.id]);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101622' : '#f6f6f8';
@@ -52,10 +66,12 @@ export default function PropertiesScreen() {
     
     // Apply search filter
     if (searchQuery) {
+      const query = searchQuery.toLowerCase();
       result = result.filter((p) =>
-        p.streetAddress.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.state.toLowerCase().includes(searchQuery.toLowerCase())
+        (p.address1 || p.streetAddress || '').toLowerCase().includes(query) ||
+        (p.name || '').toLowerCase().includes(query) ||
+        p.city.toLowerCase().includes(query) ||
+        p.state.toLowerCase().includes(query)
       );
     }
     
@@ -67,9 +83,10 @@ export default function PropertiesScreen() {
     return result;
   }, [properties, searchQuery, selectedPropertyIds]);
 
-  // Get full address for display
+  // Get full address for display (use address1, fallback to streetAddress for legacy data)
   const getFullAddress = (property: Property) => {
-    return `${property.streetAddress}, ${property.city}`;
+    const address = property.address1 || property.streetAddress || 'Unknown Address';
+    return `${address}, ${property.city}`;
   };
 
   // Get occupancy stats
@@ -87,8 +104,11 @@ export default function PropertiesScreen() {
       <TouchableOpacity
         onPress={() => router.push(`/property-detail?id=${property.id}`)}
         style={[styles.propertyCard, { backgroundColor: cardBgColor, borderColor }]}>
-        {property.photo ? (
-          <Image source={{ uri: property.photo }} style={styles.propertyImage} />
+        {(property.photos && property.photos.length > 0) || property.photo ? (
+          <Image 
+            source={{ uri: property.photos?.[0] || property.photo }} 
+            style={styles.propertyImage} 
+          />
         ) : (
           <View style={[styles.propertyImage, styles.propertyImagePlaceholder, { backgroundColor: isDark ? '#374151' : '#e5e7eb' }]}>
             <MaterialCommunityIcons name="home-outline" size={48} color={secondaryTextColor} />
@@ -97,7 +117,7 @@ export default function PropertiesScreen() {
         <View style={styles.propertyContent}>
           <View style={styles.propertyHeader}>
             <ThemedText type="subtitle" style={[styles.propertyTitle, { color: textColor }]}>
-              {property.streetAddress}
+              {property.address1 || property.streetAddress || 'Unknown Address'}
             </ThemedText>
             <View style={[styles.statusBadge, { backgroundColor: `${statusColor}20` }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />

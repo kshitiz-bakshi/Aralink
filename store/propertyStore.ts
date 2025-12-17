@@ -1,5 +1,23 @@
 import { create } from 'zustand';
 
+import {
+  createProperty as createPropertyInDb,
+  createSubUnit as createSubUnitInDb,
+  createUnit as createUnitInDb,
+  DbProperty,
+  DbSubUnit,
+  DbUnit,
+  deletePropertyFromDb,
+  deleteSubUnitFromDb,
+  deleteUnitFromDb,
+  fetchProperties,
+  fetchSubUnitsForUnit,
+  fetchUnitsForProperty,
+  updatePropertyInDb,
+  updateSubUnitInDb,
+  updateUnitInDb,
+} from '@/lib/supabase';
+
 // Types for property management
 export interface SubUnit {
   id: string;
@@ -91,25 +109,32 @@ export interface Property {
 interface PropertyStore {
   properties: Property[];
   selectedPropertyIds: string[];
+  isLoading: boolean;
+  isSynced: boolean;
+  error: string | null;
   
   // Actions
-  addProperty: (property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>) => string;
-  updateProperty: (id: string, updates: Partial<Property>) => void;
-  deleteProperty: (id: string) => void;
+  addProperty: (property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>, userId?: string) => Promise<string>;
+  updateProperty: (id: string, updates: Partial<Property>) => Promise<void>;
+  deleteProperty: (id: string) => Promise<void>;
   getPropertyById: (id: string) => Property | undefined;
   
   // Unit management
-  addUnit: (propertyId: string, unit: Omit<Unit, 'id' | 'subUnits' | 'isOccupied'>) => void;
-  updateUnit: (propertyId: string, unitId: string, updates: Partial<Unit>) => void;
-  deleteUnit: (propertyId: string, unitId: string) => void;
+  addUnit: (propertyId: string, unit: Omit<Unit, 'id' | 'subUnits' | 'isOccupied'>) => Promise<void>;
+  updateUnit: (propertyId: string, unitId: string, updates: Partial<Unit>) => Promise<void>;
+  deleteUnit: (propertyId: string, unitId: string) => Promise<void>;
   
   // Sub-unit management
-  addSubUnit: (propertyId: string, unitId: string, subUnit: Omit<SubUnit, 'id'>) => void;
-  updateSubUnit: (propertyId: string, unitId: string, subUnitId: string, updates: Partial<SubUnit>) => void;
-  deleteSubUnit: (propertyId: string, unitId: string, subUnitId: string) => void;
+  addSubUnit: (propertyId: string, unitId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
+  updateSubUnit: (propertyId: string, unitId: string, subUnitId: string, updates: Partial<SubUnit>) => Promise<void>;
+  deleteSubUnit: (propertyId: string, unitId: string, subUnitId: string) => Promise<void>;
   
   // For single unit properties - add room directly to the first unit
-  addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => void;
+  addRoomToSingleUnit: (propertyId: string, subUnit: Omit<SubUnit, 'id'>) => Promise<void>;
+  
+  // Supabase sync
+  loadFromSupabase: (userId: string) => Promise<void>;
+  syncToSupabase: (userId: string) => Promise<void>;
   
   // Filter management
   setSelectedPropertyIds: (ids: string[]) => void;
@@ -117,8 +142,94 @@ interface PropertyStore {
   clearPropertySelection: () => void;
 }
 
+// Helper to convert DB property to local property format
+const dbToLocalProperty = (dbProperty: DbProperty, units: Unit[] = []): Property => ({
+  id: dbProperty.id,
+  name: dbProperty.name,
+  address1: dbProperty.address1,
+  address2: dbProperty.address2,
+  city: dbProperty.city,
+  state: dbProperty.state,
+  zipCode: dbProperty.zip_code,
+  country: dbProperty.country,
+  propertyType: dbProperty.property_type,
+  landlordName: dbProperty.landlord_name,
+  rentCompleteProperty: dbProperty.rent_complete_property,
+  description: dbProperty.description,
+  photos: dbProperty.photos,
+  parkingIncluded: dbProperty.parking_included,
+  rentAmount: dbProperty.rent_amount,
+  utilities: dbProperty.utilities,
+  units,
+  status: dbProperty.status,
+  createdAt: dbProperty.created_at,
+});
+
+// Helper to convert local property to DB format
+const localToDbProperty = (property: Partial<Property>, userId: string): Partial<DbProperty> => ({
+  user_id: userId,
+  name: property.name,
+  address1: property.address1 || property.streetAddress || '',
+  address2: property.address2,
+  city: property.city || '',
+  state: property.state || '',
+  zip_code: property.zipCode || '',
+  country: property.country || 'USA',
+  property_type: property.propertyType || 'single_unit',
+  landlord_name: property.landlordName,
+  rent_complete_property: property.rentCompleteProperty,
+  description: property.description,
+  photos: property.photos,
+  parking_included: property.parkingIncluded,
+  rent_amount: property.rentAmount,
+  utilities: property.utilities,
+  status: property.status || 'active',
+});
+
+// Helper to convert DB unit to local unit format
+const dbToLocalUnit = (dbUnit: DbUnit, subUnits: SubUnit[] = []): Unit => ({
+  id: dbUnit.id,
+  name: dbUnit.name,
+  description: dbUnit.description,
+  unitType: dbUnit.unit_type,
+  bedrooms: dbUnit.bedrooms,
+  bathrooms: dbUnit.bathrooms,
+  area: dbUnit.area,
+  rentEntireUnit: dbUnit.rent_entire_unit,
+  defaultRentPrice: dbUnit.default_rent_price,
+  availabilityDate: dbUnit.availability_date,
+  leaseStartDate: dbUnit.lease_start_date,
+  leaseEndDate: dbUnit.lease_end_date,
+  photos: dbUnit.photos,
+  amenities: dbUnit.amenities as Unit['amenities'],
+  subUnits,
+  tenantId: dbUnit.tenant_id,
+  isOccupied: dbUnit.is_occupied,
+});
+
+// Helper to convert DB sub-unit to local format
+const dbToLocalSubUnit = (dbSubUnit: DbSubUnit): SubUnit => ({
+  id: dbSubUnit.id,
+  name: dbSubUnit.name,
+  type: dbSubUnit.type,
+  rentPrice: dbSubUnit.rent_price,
+  area: dbSubUnit.area,
+  availabilityDate: dbSubUnit.availability_date,
+  photos: dbSubUnit.photos,
+  amenities: dbSubUnit.amenities,
+  sharedSpaces: dbSubUnit.shared_spaces,
+  tenantId: dbSubUnit.tenant_id,
+  tenantName: dbSubUnit.tenant_name,
+});
+
 // Generate unique ID
 const generateId = () => Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+
+// Helper to check if a string is a valid UUID format
+const isValidUUID = (str: string): boolean => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+};
 
 // Mock initial data
 const INITIAL_PROPERTIES: Property[] = [
@@ -225,8 +336,100 @@ const INITIAL_PROPERTIES: Property[] = [
 export const usePropertyStore = create<PropertyStore>((set, get) => ({
   properties: INITIAL_PROPERTIES,
   selectedPropertyIds: [],
+  isLoading: false,
+  isSynced: false,
+  error: null,
   
-  addProperty: (propertyData) => {
+  // Load properties from Supabase
+  loadFromSupabase: async (userId: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      
+      const dbProperties = await fetchProperties(userId);
+      
+      if (dbProperties.length > 0) {
+        // Load units and sub-units for each property
+        const propertiesWithUnits: Property[] = await Promise.all(
+          dbProperties.map(async (dbProp) => {
+            const dbUnits = await fetchUnitsForProperty(dbProp.id);
+            
+            const unitsWithSubUnits: Unit[] = await Promise.all(
+              dbUnits.map(async (dbUnit) => {
+                const dbSubUnits = await fetchSubUnitsForUnit(dbUnit.id);
+                const subUnits = dbSubUnits.map(dbToLocalSubUnit);
+                return dbToLocalUnit(dbUnit, subUnits);
+              })
+            );
+            
+            return dbToLocalProperty(dbProp, unitsWithSubUnits);
+          })
+        );
+        
+        set({ properties: propertiesWithUnits, isLoading: false, isSynced: true });
+      } else {
+        // No properties in database, keep local data but mark as synced
+        set({ isLoading: false, isSynced: true });
+      }
+    } catch (error) {
+      console.error('Error loading from Supabase:', error);
+      set({ isLoading: false, error: 'Failed to load properties' });
+    }
+  },
+  
+  // Sync local properties to Supabase
+  syncToSupabase: async (userId: string) => {
+    try {
+      set({ isLoading: true, error: null });
+      
+      const properties = get().properties;
+      
+      for (const property of properties) {
+        const dbPropertyData = localToDbProperty(property, userId);
+        await createPropertyInDb(dbPropertyData as any);
+      }
+      
+      set({ isLoading: false, isSynced: true });
+    } catch (error) {
+      console.error('Error syncing to Supabase:', error);
+      set({ isLoading: false, error: 'Failed to sync properties' });
+    }
+  },
+  
+  addProperty: async (propertyData, userId) => {
+    // Try to save to Supabase if userId is provided
+    if (userId) {
+      try {
+        set({ isLoading: true });
+        
+        const dbPropertyData = localToDbProperty({
+          ...propertyData,
+          utilities: propertyData.utilities || {
+            electricity: 'landlord',
+            heatGas: 'landlord',
+            water: 'landlord',
+            wifi: 'landlord',
+            rentalEquipments: 'landlord',
+          },
+        } as Property, userId);
+        
+        // Save to Supabase - let it generate UUID
+        const savedProperty = await createPropertyInDb(dbPropertyData as any);
+        
+        if (savedProperty) {
+          // Refresh list from API to get the latest data with correct UUIDs
+          await get().loadFromSupabase(userId);
+          set({ isLoading: false });
+          return savedProperty.id;
+        }
+        
+        set({ isLoading: false });
+      } catch (error) {
+        console.error('Error saving property to Supabase:', error);
+        set({ isLoading: false });
+      }
+    }
+    
+    // Fallback: Add locally if no userId or Supabase fails
     const id = generateId();
     const newProperty: Property = {
       ...propertyData,
@@ -246,19 +449,51 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     return id;
   },
   
-  updateProperty: (id, updates) => {
+  updateProperty: async (id, updates) => {
+    // Update local state first
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === id ? { ...p, ...updates } : p
       ),
     }));
+    
+    // Try to update in Supabase
+    try {
+      await updatePropertyInDb(id, {
+        name: updates.name,
+        address1: updates.address1 || updates.streetAddress,
+        address2: updates.address2,
+        city: updates.city,
+        state: updates.state,
+        zip_code: updates.zipCode,
+        property_type: updates.propertyType,
+        landlord_name: updates.landlordName,
+        rent_complete_property: updates.rentCompleteProperty,
+        description: updates.description,
+        photos: updates.photos,
+        parking_included: updates.parkingIncluded,
+        rent_amount: updates.rentAmount,
+        utilities: updates.utilities,
+        status: updates.status,
+      } as any);
+    } catch (error) {
+      console.error('Error updating property in Supabase:', error);
+    }
   },
   
-  deleteProperty: (id) => {
+  deleteProperty: async (id) => {
+    // Update local state first
     set((state) => ({
       properties: state.properties.filter((p) => p.id !== id),
       selectedPropertyIds: state.selectedPropertyIds.filter((pid) => pid !== id),
     }));
+    
+    // Try to delete from Supabase
+    try {
+      await deletePropertyFromDb(id);
+    } catch (error) {
+      console.error('Error deleting property from Supabase:', error);
+    }
   },
   
   getPropertyById: (id) => {
@@ -266,8 +501,10 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   },
   
   // Unit management
-  addUnit: (propertyId, unitData) => {
+  addUnit: async (propertyId, unitData) => {
     const unitId = generateId();
+    
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -281,9 +518,50 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to save to Supabase
+    try {
+      const savedUnit = await createUnitInDb({
+        property_id: propertyId,
+        name: unitData.name,
+        description: unitData.description,
+        unit_type: unitData.unitType,
+        bedrooms: unitData.bedrooms,
+        bathrooms: unitData.bathrooms,
+        area: unitData.area,
+        rent_entire_unit: unitData.rentEntireUnit,
+        default_rent_price: unitData.defaultRentPrice,
+        availability_date: unitData.availabilityDate,
+        lease_start_date: unitData.leaseStartDate,
+        lease_end_date: unitData.leaseEndDate,
+        photos: unitData.photos,
+        amenities: unitData.amenities as Record<string, boolean>,
+        tenant_id: unitData.tenantId,
+        is_occupied: false,
+      });
+      
+      // Update local state with Supabase-generated UUID if saved successfully
+      if (savedUnit) {
+        set((state) => ({
+          properties: state.properties.map((p) =>
+            p.id === propertyId
+              ? {
+                  ...p,
+                  units: p.units.map((u) =>
+                    u.id === unitId ? { ...u, id: savedUnit.id } : u
+                  ),
+                }
+              : p
+          ),
+        }));
+      }
+    } catch (error) {
+      console.error('Error saving unit to Supabase:', error);
+    }
   },
   
-  updateUnit: (propertyId, unitId, updates) => {
+  updateUnit: async (propertyId, unitId, updates) => {
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -296,9 +574,33 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to update in Supabase
+    try {
+      await updateUnitInDb(unitId, {
+        name: updates.name,
+        description: updates.description,
+        unit_type: updates.unitType,
+        bedrooms: updates.bedrooms,
+        bathrooms: updates.bathrooms,
+        area: updates.area,
+        rent_entire_unit: updates.rentEntireUnit,
+        default_rent_price: updates.defaultRentPrice,
+        availability_date: updates.availabilityDate,
+        lease_start_date: updates.leaseStartDate,
+        lease_end_date: updates.leaseEndDate,
+        photos: updates.photos,
+        amenities: updates.amenities as Record<string, boolean>,
+        tenant_id: updates.tenantId,
+        is_occupied: updates.isOccupied,
+      } as any);
+    } catch (error) {
+      console.error('Error updating unit in Supabase:', error);
+    }
   },
   
-  deleteUnit: (propertyId, unitId) => {
+  deleteUnit: async (propertyId, unitId) => {
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -306,11 +608,20 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to delete from Supabase
+    try {
+      await deleteUnitFromDb(unitId);
+    } catch (error) {
+      console.error('Error deleting unit from Supabase:', error);
+    }
   },
   
   // Sub-unit management
-  addSubUnit: (propertyId, unitId, subUnitData) => {
+  addSubUnit: async (propertyId, unitId, subUnitData) => {
     const subUnitId = generateId();
+    
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -325,9 +636,56 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to save to Supabase only if unitId is a valid UUID
+    if (isValidUUID(unitId)) {
+      try {
+        const savedSubUnit = await createSubUnitInDb({
+          unit_id: unitId,
+          name: subUnitData.name,
+          type: subUnitData.type,
+          rent_price: subUnitData.rentPrice,
+          area: subUnitData.area,
+          availability_date: subUnitData.availabilityDate,
+          photos: subUnitData.photos,
+          amenities: subUnitData.amenities,
+          shared_spaces: subUnitData.sharedSpaces,
+          tenant_id: subUnitData.tenantId,
+          tenant_name: subUnitData.tenantName,
+        });
+      
+      // Update local state with Supabase-generated UUID if saved successfully
+      if (savedSubUnit) {
+        set((state) => ({
+          properties: state.properties.map((p) =>
+            p.id === propertyId
+              ? {
+                  ...p,
+                  units: p.units.map((u) =>
+                    u.id === unitId
+                      ? {
+                          ...u,
+                          subUnits: u.subUnits.map((su) =>
+                            su.id === subUnitId ? { ...su, id: savedSubUnit.id } : su
+                          ),
+                        }
+                      : u
+                  ),
+                }
+              : p
+          ),
+        }));
+      }
+      } catch (error) {
+        console.error('Error saving sub-unit to Supabase:', error);
+      }
+    } else {
+      console.log('Skipping Supabase save: unitId is not a valid UUID (local-only sub-unit)');
+    }
   },
   
-  updateSubUnit: (propertyId, unitId, subUnitId, updates) => {
+  updateSubUnit: async (propertyId, unitId, subUnitId, updates) => {
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -347,9 +705,28 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to update in Supabase
+    try {
+      await updateSubUnitInDb(subUnitId, {
+        name: updates.name,
+        type: updates.type,
+        rent_price: updates.rentPrice,
+        area: updates.area,
+        availability_date: updates.availabilityDate,
+        photos: updates.photos,
+        amenities: updates.amenities,
+        shared_spaces: updates.sharedSpaces,
+        tenant_id: updates.tenantId,
+        tenant_name: updates.tenantName,
+      } as any);
+    } catch (error) {
+      console.error('Error updating sub-unit in Supabase:', error);
+    }
   },
   
-  deleteSubUnit: (propertyId, unitId, subUnitId) => {
+  deleteSubUnit: async (propertyId, unitId, subUnitId) => {
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) =>
         p.id === propertyId
@@ -364,6 +741,13 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           : p
       ),
     }));
+    
+    // Try to delete from Supabase
+    try {
+      await deleteSubUnitFromDb(subUnitId);
+    } catch (error) {
+      console.error('Error deleting sub-unit from Supabase:', error);
+    }
   },
   
   // Filter management
@@ -384,14 +768,18 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   },
   
   // For single unit properties - add room directly
-  addRoomToSingleUnit: (propertyId, subUnitData) => {
+  addRoomToSingleUnit: async (propertyId, subUnitData) => {
     const subUnitId = generateId();
+    let unitId: string | null = null;
+    
+    // Update local state
     set((state) => ({
       properties: state.properties.map((p) => {
         if (p.id === propertyId) {
           // If no units exist, create a main unit first
           if (p.units.length === 0) {
             const mainUnitId = generateId();
+            unitId = mainUnitId;
             return {
               ...p,
               units: [
@@ -406,6 +794,7 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
           }
           // Add to the first (main) unit
           const mainUnit = p.units[0];
+          unitId = mainUnit.id;
           return {
             ...p,
             units: [
@@ -420,6 +809,55 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
         return p;
       }),
     }));
+    
+    // Try to save to Supabase only if unitId is a valid UUID
+    if (unitId && isValidUUID(unitId)) {
+      try {
+        const savedSubUnit = await createSubUnitInDb({
+          unit_id: unitId,
+          name: subUnitData.name,
+          type: subUnitData.type,
+          rent_price: subUnitData.rentPrice,
+          area: subUnitData.area,
+          availability_date: subUnitData.availabilityDate,
+          photos: subUnitData.photos,
+          amenities: subUnitData.amenities,
+          shared_spaces: subUnitData.sharedSpaces,
+          tenant_id: subUnitData.tenantId,
+          tenant_name: subUnitData.tenantName,
+        });
+        
+        // Update local state with Supabase-generated UUID if saved successfully
+        if (savedSubUnit) {
+          set((state) => ({
+            properties: state.properties.map((p) => {
+              if (p.id === propertyId) {
+                return {
+                  ...p,
+                  units: p.units.map((u) =>
+                    u.id === unitId
+                      ? {
+                          ...u,
+                          subUnits: u.subUnits.map((su) =>
+                            su.id === subUnitId ? { ...su, id: savedSubUnit.id } : su
+                          ),
+                        }
+                      : u
+                  ),
+                };
+              }
+              return p;
+            }),
+          }));
+        }
+      } catch (error) {
+        console.error('Error saving room to Supabase:', error);
+        // Note: If unit doesn't exist in Supabase yet, this will fail
+        // The local state is still updated, so the UI works
+      }
+    } else if (unitId) {
+      console.log('Skipping Supabase save: unitId is not a valid UUID (local-only room)');
+    }
   },
 }));
 

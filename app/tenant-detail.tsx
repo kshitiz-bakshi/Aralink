@@ -297,7 +297,7 @@ export default function TenantDetailScreen() {
 
           {/* Empty State */}
           <View style={styles.emptyLedger}>
-            <MaterialCommunityIcons name="receipt-long" size={64} color={secondaryTextColor} />
+            <MaterialCommunityIcons name="receipt-text-outline" size={64} color={secondaryTextColor} />
             <ThemedText style={[styles.emptyLedgerTitle, { color: textColor }]}>
               No invoices found
             </ThemedText>
