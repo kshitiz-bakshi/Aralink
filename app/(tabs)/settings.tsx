@@ -1,13 +1,13 @@
-import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, Switch, Alert } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/store/authStore';
 
 interface SettingItem {
   icon: string;
@@ -25,6 +25,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
+  const { signOut, user } = useAuthStore();
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#101922' : '#F4F6F8';
@@ -77,10 +78,8 @@ export default function SettingsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Clear all stored data
-              await AsyncStorage.multiRemove(['userRole', 'userToken', 'userEmail']);
-              // Navigate to login screen
-              router.replace('/(auth)/login');
+              await signOut();
+              router.replace('/(auth)');
             } catch (error) {
               console.error('Logout error:', error);
               Alert.alert('Error', 'Failed to log out. Please try again.');

@@ -5,9 +5,9 @@ import { Platform, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { WebNavbar } from '@/components/web-navbar';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { WebNavbar } from '@/components/web-navbar';
 
 type UserRole = 'landlord' | 'manager' | 'tenant' | null;
 

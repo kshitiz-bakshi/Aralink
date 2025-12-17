@@ -1,13 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React from 'react';
 import {
-    FlatList,
-    ListRenderItem,
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  FlatList,
+  ListRenderItem,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 

@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, Href } from 'expo-router';
+import { Href, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   FlatList,
@@ -105,12 +105,12 @@ export default function LandlordDashboardScreen() {
 
   const handleAddProperty = () => {
     setShowAddMenu(false);
-    router.push('/property-detail');
+    router.push('/add-property');
   };
 
   const handleAddTenant = () => {
     setShowAddMenu(false);
-    router.push('/tenant-detail');
+    router.push('/add-tenant');
   };
 
   const renderTile: ListRenderItem<DashboardTile> = ({ item }) => {

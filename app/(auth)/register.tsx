@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -17,9 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { appleAuth, facebookAuth, googleAuth } from '@/services/oauth-service';
-
-type UserType = 'landlord' | 'tenant' | 'manager';
+import { useAuthStore, UserRole } from '@/store/authStore';
 
 interface RegisterScreenProps {
   onSwitchToLogin?: () => void;
@@ -30,13 +27,23 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [showPassword, setShowPassword] = useState(false);
-  const [selectedUserType, setSelectedUserType] = useState<UserType | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [selectedUserType, setSelectedUserType] = useState<UserRole | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
   });
+
+  // Get auth store state and actions
+  const { 
+    signUp, 
+    signInWithGoogle, 
+    signInWithApple, 
+    signInWithFacebook,
+    isLoading,
+    error,
+    clearError,
+  } = useAuthStore();
 
   const isAndroid = Platform.OS === 'android';
   const isDark = colorScheme === 'dark';
@@ -47,6 +54,15 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
   const textColor = isDark ? '#F4F6F8' : '#111827';
   const subtextColor = isDark ? '#94a3b8' : '#6B7280';
   const placeholderColor = isDark ? '#64748b' : '#9ca3af';
+
+  const navigateToDashboard = (role: UserRole) => {
+    if (role === 'tenant') {
+      router.replace('/(tabs)/tenant-dashboard');
+    } else {
+      // landlord and manager go to landlord dashboard
+      router.replace('/(tabs)/landlord-dashboard');
+    }
+  };
 
   const handleRegister = async () => {
     if (!selectedUserType) {
@@ -59,25 +75,27 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
-    setIsLoading(true);
-    try {
-      // Save user role to AsyncStorage
-      await AsyncStorage.setItem('userRole', selectedUserType);
-      // TODO: Register with Supabase using selectedUserType and formData
-      console.log('Registration successful:', selectedUserType, formData);
-      Alert.alert('Success', 'Account created successfully!');
-      if (selectedUserType === 'landlord') {
-        router.replace('/(tabs)/landlord-dashboard');
-      } else if (selectedUserType === 'tenant') {
-        router.replace('/(tabs)/tenant-dashboard');
-      } else if (selectedUserType === 'manager') {
-        router.replace('/(tabs)/landlord-dashboard');
+    if (formData.password.length < 6) {
+      Alert.alert('Weak Password', 'Password must be at least 6 characters');
+      return;
+    }
+
+    clearError();
+    const result = await signUp(formData.email, formData.password, formData.name, selectedUserType);
+    
+    if (result.success) {
+      if (result.needsVerification) {
+        // Navigate to email verification screen
+        router.replace({
+          pathname: '/(auth)/verify-email',
+          params: { email: formData.email },
+        });
+      } else {
+        // No verification needed, go to dashboard
+        navigateToDashboard(selectedUserType);
       }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save user profile');
-      console.error('Registration error:', error);
-    } finally {
-      setIsLoading(false);
+    } else {
+      Alert.alert('Registration Failed', result.error || 'Failed to create account');
     }
   };
 
@@ -87,31 +105,13 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
-    setIsLoading(true);
-    try {
-      // Get current Google user from AsyncStorage (previously logged in)
-      const currentUser = await googleAuth.getCurrentUser();
-      if (currentUser) {
-        // Save user role to AsyncStorage
-        await AsyncStorage.setItem('userRole', selectedUserType);
-        console.log('Google Sign Up successful:', currentUser, 'as', selectedUserType);
-        Alert.alert('Success', 'Google sign up completed successfully!');
-        if (selectedUserType === 'landlord') {
-          router.replace('/(tabs)/landlord-dashboard');
-        } else if (selectedUserType === 'tenant') {
-          router.replace('/(tabs)/tenant-dashboard');
-        } else if (selectedUserType === 'manager') {
-          router.replace('/(tabs)/landlord-dashboard');
-        }
-      } else {
-        Alert.alert('Info', 'Please use the Google Sign Up button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Google sign up');
-      console.error('Google signup error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithGoogle(selectedUserType);
+    
+    if (!result.success) {
+      Alert.alert('Google Sign Up Failed', result.error || 'An error occurred');
     }
+    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleAppleSignUp = async () => {
@@ -120,31 +120,13 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
-    setIsLoading(true);
-    try {
-      // Get current Apple user from AsyncStorage (previously logged in)
-      const currentUser = await appleAuth.getCurrentUser();
-      if (currentUser) {
-        // Save user role to AsyncStorage
-        await AsyncStorage.setItem('userRole', selectedUserType);
-        console.log('Apple Sign Up successful:', currentUser, 'as', selectedUserType);
-        Alert.alert('Success', 'Apple sign up completed successfully!');
-        if (selectedUserType === 'landlord') {
-          router.replace('/(tabs)/landlord-dashboard');
-        } else if (selectedUserType === 'tenant') {
-          router.replace('/(tabs)/tenant-dashboard');
-        } else if (selectedUserType === 'manager') {
-          router.replace('/(tabs)/landlord-dashboard');
-        }
-      } else {
-        Alert.alert('Info', 'Please use the Apple Sign Up button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Apple sign up');
-      console.error('Apple signup error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithApple(selectedUserType);
+    
+    if (!result.success) {
+      Alert.alert('Apple Sign Up Failed', result.error || 'An error occurred');
     }
+    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleFacebookSignUp = async () => {
@@ -153,32 +135,84 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
       return;
     }
 
-    setIsLoading(true);
-    try {
-      // Get current Facebook user from AsyncStorage (previously logged in)
-      const currentUser = await facebookAuth.getCurrentUser();
-      if (currentUser) {
-        // Save user role to AsyncStorage
-        await AsyncStorage.setItem('userRole', selectedUserType);
-        console.log('Facebook Sign Up successful:', currentUser, 'as', selectedUserType);
-        Alert.alert('Success', 'Facebook sign up completed successfully!');
-        if (selectedUserType === 'landlord') {
-          router.replace('/(tabs)/landlord-dashboard');
-        } else if (selectedUserType === 'tenant') {
-          router.replace('/(tabs)/tenant-dashboard');
-        } else if (selectedUserType === 'manager') {
-          router.replace('/(tabs)/landlord-dashboard');
-        }
-        Alert.alert('Info', 'Please use the Facebook Sign Up button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Facebook sign up');
-      console.error('Facebook signup error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithFacebook(selectedUserType);
+    
+    if (!result.success) {
+      Alert.alert('Facebook Sign Up Failed', result.error || 'An error occurred');
+    }
+    // OAuth flow will handle navigation via deep link callback
+  };
+
+  const getRoleDisplayName = (role: UserRole): string => {
+    switch (role) {
+      case 'landlord':
+        return 'Landlord';
+      case 'tenant':
+        return 'Tenant';
+      case 'manager':
+        return 'Property Manager';
+      default:
+        return role;
     }
   };
 
+  const UserTypeCard = ({ 
+    type, 
+    icon, 
+    title, 
+    description 
+  }: { 
+    type: UserRole; 
+    icon: string; 
+    title: string; 
+    description: string 
+  }) => {
+    const isSelected = selectedUserType === type;
+    return (
+      <TouchableOpacity
+        style={[
+          styles.userTypeCard,
+          {
+            backgroundColor: isSelected ? `${primaryColor}15` : (isDark ? '#1e293b' : '#F4F6F8'),
+            borderColor: isSelected ? primaryColor : borderColor,
+            borderWidth: isSelected ? 2 : 1,
+          },
+        ]}
+        onPress={() => setSelectedUserType(type)}
+      >
+        <View style={[
+          styles.userTypeIconContainer,
+          { backgroundColor: isSelected ? `${primaryColor}20` : (isDark ? '#334155' : '#e5e7eb') }
+        ]}>
+          <MaterialCommunityIcons 
+            name={icon as any} 
+            size={24} 
+            color={isSelected ? primaryColor : subtextColor} 
+          />
+        </View>
+        <View style={styles.userTypeContent}>
+          <ThemedText style={[
+            styles.userTypeTitle, 
+            { color: isSelected ? primaryColor : textColor }
+          ]}>
+            {title}
+          </ThemedText>
+          <ThemedText style={[styles.userTypeDescription, { color: subtextColor }]}>
+            {description}
+          </ThemedText>
+        </View>
+        <View style={[
+          styles.radioOuter,
+          { borderColor: isSelected ? primaryColor : borderColor }
+        ]}>
+          {isSelected && (
+            <View style={[styles.radioInner, { backgroundColor: primaryColor }]} />
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -236,6 +270,31 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
               Create Your Account
             </ThemedText>
 
+            {/* User Type Selection */}
+            <View style={styles.userTypeSection}>
+              <ThemedText style={[styles.sectionLabel, { color: textColor }]}>
+                I am a...
+              </ThemedText>
+              <UserTypeCard
+                type="landlord"
+                icon="home-city"
+                title="Landlord"
+                description="Own and manage rental properties"
+              />
+              <UserTypeCard
+                type="tenant"
+                icon="account"
+                title="Tenant"
+                description="Rent and live in a property"
+              />
+              <UserTypeCard
+                type="manager"
+                icon="briefcase"
+                title="Property Manager"
+                description="Manage properties for landlords"
+              />
+            </View>
+
             {/* Full Name */}
             <View style={styles.inputGroup}>
               <ThemedText style={[styles.label, { color: textColor }]}>
@@ -274,6 +333,7 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                 placeholder="Enter your email address"
                 placeholderTextColor={placeholderColor}
                 keyboardType="email-address"
+                autoCapitalize="none"
                 value={formData.email}
                 onChangeText={(value) => setFormData({ ...formData, email: value })}
               />
@@ -295,7 +355,7 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
                       color: textColor,
                     },
                   ]}
-                  placeholder="Create a strong password"
+                  placeholder="Create a strong password (min 6 chars)"
                   placeholderTextColor={placeholderColor}
                   secureTextEntry={!showPassword}
                   value={formData.password}
@@ -314,77 +374,23 @@ export default function RegisterScreen({ onSwitchToLogin }: RegisterScreenProps)
               </View>
             </View>
 
-            {/* Role Select */}
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>
-                Select your role
-              </ThemedText>
-              <View
-                style={[
-                  styles.selectWrapper,
-                  {
-                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                    borderColor,
-                  },
-                ]}
-              >
-                <TouchableOpacity
-                  style={styles.selectTrigger}
-                  onPress={() => {
-                    Alert.alert('Select Role', 'Choose your account type', [
-                      {
-                        text: 'Landlord',
-                        onPress: () => setSelectedUserType('landlord'),
-                      },
-                      {
-                        text: 'Property Manager',
-                        onPress: () => setSelectedUserType('manager'),
-                      },
-                      {
-                        text: 'Tenant',
-                        onPress: () => setSelectedUserType('tenant'),
-                      },
-                      {
-                        text: 'Cancel',
-                        style: 'cancel',
-                      },
-                    ]);
-                  }}
-                >
-                  <ThemedText
-                    style={[
-                      styles.selectText,
-                      {
-                        color: selectedUserType ? textColor : placeholderColor,
-                      },
-                    ]}
-                  >
-                    {selectedUserType
-                      ? selectedUserType.charAt(0).toUpperCase() + selectedUserType.slice(1)
-                      : 'Choose your role'}
-                  </ThemedText>
-                </TouchableOpacity>
-                <MaterialCommunityIcons
-                  name="chevron-down"
-                  size={20}
-                  color={subtextColor}
-                  style={styles.selectIcon}
-                />
-              </View>
-            </View>
-
             {/* Sign Up Button */}
             <TouchableOpacity
               style={[
                 styles.submitButton,
                 {
                   backgroundColor: selectedUserType ? primaryColor : '#cccccc',
+                  opacity: isLoading ? 0.7 : 1,
                 },
               ]}
               disabled={!selectedUserType || isLoading}
               onPress={handleRegister}
             >
-              <ThemedText style={styles.submitButtonText}>Sign Up</ThemedText>
+              {isLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <ThemedText style={styles.submitButtonText}>Sign Up</ThemedText>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -503,7 +509,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingVertical: 20,
     paddingHorizontal: 16,
-    justifyContent: 'center',
   },
   logoContainer: {
     alignItems: 'center',
@@ -558,8 +563,55 @@ const styles = StyleSheet.create({
   formTitle: {
     fontSize: 20,
     fontWeight: '600',
-    marginBottom: 24,
+    marginBottom: 20,
     textAlign: 'center',
+  },
+  userTypeSection: {
+    marginBottom: 20,
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  userTypeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  userTypeIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userTypeContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  userTypeTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  userTypeDescription: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  radioOuter: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioInner: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
   },
   inputGroup: {
     marginBottom: 16,
@@ -588,26 +640,8 @@ const styles = StyleSheet.create({
     top: 12,
     padding: 4,
   },
-  selectWrapper: {
-    borderWidth: 1,
-    borderRadius: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  selectTrigger: {
-    flex: 1,
-  },
-  selectText: {
-    fontSize: 14,
-    fontWeight: '400',
-  },
-  selectIcon: {
-    marginLeft: 8,
-  },
   submitButton: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 8,

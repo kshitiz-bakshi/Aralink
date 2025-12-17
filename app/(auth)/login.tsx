@@ -1,13 +1,22 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { appleAuth, facebookAuth, googleAuth } from '@/services/oauth-service';
+import { useAuthStore } from '@/store/authStore';
 
 interface LoginScreenProps {
   onSwitchToRegister?: () => void;
@@ -18,11 +27,22 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
     email: '',
     password: '',
   });
+
+  // Get auth store state and actions
+  const { 
+    signIn, 
+    signInWithGoogle, 
+    signInWithApple, 
+    signInWithFacebook,
+    resetPassword,
+    isLoading,
+    error,
+    clearError,
+  } = useAuthStore();
 
   const isAndroid = Platform.OS === 'android';
   const isDark = colorScheme === 'dark';
@@ -34,93 +54,65 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
   const subtextColor = isDark ? '#94a3b8' : '#6B7280';
   const placeholderColor = isDark ? '#64748b' : '#9ca3af';
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!formData.email || !formData.password) {
       Alert.alert('Missing Information', 'Please fill in all fields');
       return;
     }
 
-    // TODO: Implement email/password login with Supabase
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      const selectedUserType = 'landlord';
-      if (selectedUserType === 'landlord') {
-        router.replace('/(tabs)/landlord-dashboard');
-      } else if (selectedUserType === 'tenant') {
+    clearError();
+    const result = await signIn(formData.email, formData.password);
+    
+    if (result.success && result.user) {
+      // Navigate based on user role
+      const userRole = result.user.role;
+      console.log('Login successful, user role:', userRole);
+      
+      if (userRole === 'tenant') {
         router.replace('/(tabs)/tenant-dashboard');
-      } else if (selectedUserType === 'manager') {
+      } else if (userRole === 'manager') {
+        router.replace('/(tabs)/landlord-dashboard');
+      } else {
+        // Default to landlord dashboard for landlord role
         router.replace('/(tabs)/landlord-dashboard');
       }
-    }, 1500);
+    } else {
+      Alert.alert('Login Failed', result.error || 'Invalid email or password');
+    }
   };
 
   const handleGoogleSignIn = async () => {
-    setIsLoading(true);
-    try {
-      // Get current Google user from AsyncStorage (previously logged in)
-      const currentUser = await googleAuth.getCurrentUser();
-      if (currentUser) {
-        console.log('Google Sign In successful (cached):', currentUser);
-        Alert.alert('Success', 'Google sign in completed successfully!');
-        const selectedUserType = 'landlord';
-        if (selectedUserType === 'landlord') {
-          router.replace('/(tabs)/landlord-dashboard');
-        } else if (selectedUserType === 'tenant') {
-          router.replace('/(tabs)/tenant-dashboard');
-        } else if (selectedUserType === 'manager') {
-          router.replace('/(tabs)/landlord-dashboard');
-        }
-        Alert.alert('Info', 'Please use the Google Sign In button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Google sign in');
-      console.error('Google signin error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithGoogle();
+    
+    if (!result.success) {
+      Alert.alert('Google Sign In Failed', result.error || 'An error occurred');
     }
+    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleAppleSignIn = async () => {
-    setIsLoading(true);
-    try {
-      // Get current Apple user from AsyncStorage (previously logged in)
-      const currentUser = await appleAuth.getCurrentUser();
-      if (currentUser) {
-        console.log('Apple Sign In successful (cached):', currentUser);
-        Alert.alert('Success', 'Apple sign in completed successfully!');
-        router.replace('/(tabs)/landlord-dashboard');
-      } else {
-        // For new users, they need to use the hook-based flow
-        Alert.alert('Info', 'Please use the Apple Sign In button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Apple sign in');
-      console.error('Apple signin error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithApple();
+    
+    if (!result.success) {
+      Alert.alert('Apple Sign In Failed', result.error || 'An error occurred');
     }
+    // OAuth flow will handle navigation via deep link callback
   };
 
   const handleFacebookSignIn = async () => {
-    setIsLoading(true);
-    try {
-      // Get current Facebook user from AsyncStorage (previously logged in)
-      const currentUser = await facebookAuth.getCurrentUser();
-      if (currentUser) {
-        console.log('Facebook Sign In successful (cached):', currentUser);
-        Alert.alert('Success', 'Facebook sign in completed successfully!');
-        router.replace('/(tabs)/landlord-dashboard');
-      } else {
-        // For new users, they need to use the hook-based flow
-        Alert.alert('Info', 'Please use the Facebook Sign In button in the app');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'An unexpected error occurred during Facebook sign in');
-      console.error('Facebook signin error:', error);
-    } finally {
-      setIsLoading(false);
+    clearError();
+    const result = await signInWithFacebook();
+    
+    if (!result.success) {
+      Alert.alert('Facebook Sign In Failed', result.error || 'An error occurred');
     }
+    // OAuth flow will handle navigation via deep link callback
+  };
+
+  const handleForgotPassword = () => {
+    router.push({ pathname: '/(auth)/forgot-password', params: { email: formData.email } });
   };
 
   return (
@@ -175,24 +167,34 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
 
           {/* Form Content */}
           <View style={styles.formContent}>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
-                  borderColor,
-                  color: textColor,
-                },
-              ]}
-              placeholder="Enter your email address"
-              placeholderTextColor={placeholderColor}
-              keyboardType="email-address"
-              value={formData.email}
-              onChangeText={(value) => setFormData({ ...formData, email: value })}
-            />
+            {/* Email */}
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: textColor }]}>
+                Email Address
+              </ThemedText>
+              <TextInput
+                style={[
+                  styles.input,
+                  {
+                    backgroundColor: isDark ? '#1e293b' : '#F4F6F8',
+                    borderColor,
+                    color: textColor,
+                  },
+                ]}
+                placeholder="Enter your email address"
+                placeholderTextColor={placeholderColor}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={formData.email}
+                onChangeText={(value) => setFormData({ ...formData, email: value })}
+              />
+            </View>
 
             {/* Password */}
-            <View style={[styles.inputGroup, { marginTop: 16 }]}>
+            <View style={styles.inputGroup}>
+              <ThemedText style={[styles.label, { color: textColor }]}>
+                Password
+              </ThemedText>
               <View style={styles.passwordWrapper}>
                 <TextInput
                   style={[
@@ -223,18 +225,33 @@ export default function LoginScreen({ onSwitchToRegister }: LoginScreenProps) {
               </View>
             </View>
 
+            {/* Forgot Password */}
+            <TouchableOpacity 
+              style={styles.forgotPassword}
+              onPress={handleForgotPassword}
+            >
+              <ThemedText style={[styles.forgotPasswordText, { color: primaryColor }]}>
+                Forgot Password?
+              </ThemedText>
+            </TouchableOpacity>
+
             {/* Log In Button */}
             <TouchableOpacity
               style={[
                 styles.submitButton,
                 {
                   backgroundColor: primaryColor,
+                  opacity: isLoading ? 0.7 : 1,
                 },
               ]}
               disabled={isLoading}
               onPress={handleLogin}
             >
-              <ThemedText style={styles.submitButtonText}>Log In</ThemedText>
+              {isLoading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <ThemedText style={styles.submitButtonText}>Log In</ThemedText>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -438,8 +455,16 @@ const styles = StyleSheet.create({
     top: 12,
     padding: 4,
   },
+  forgotPassword: {
+    alignSelf: 'flex-end',
+    marginBottom: 16,
+  },
+  forgotPasswordText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
   submitButton: {
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 8,
