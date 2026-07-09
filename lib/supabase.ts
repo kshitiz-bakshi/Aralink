@@ -1112,10 +1112,12 @@ export async function fetchTenantById(tenantId: string): Promise<DbTenant | null
 // Create a new tenant
 export async function createTenant(tenant: Omit<DbTenant, 'id' | 'created_at' | 'updated_at'>): Promise<DbTenant | null> {
   try {
+    // sub_unit_id and sub_unit_name are stored in tenant_property_links, not the tenants table
+    const { sub_unit_id, sub_unit_name, ...tenantRow } = tenant as any;
     const { data, error } = await supabase
       .from('tenants')
       .insert({
-        ...tenant,
+        ...tenantRow,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -1314,14 +1316,22 @@ export async function addTenantToProperty(params: {
     // Always set status to active for landlord-added tenants
     const status = 'active';
 
-    // First, ensure tenant record exists in tenants table with active status
+    // First, ensure tenant record exists in tenants table with active status.
+    // tenant_property_links.tenant_id references tenants.id, so we must capture
+    // the tenants row id here and use it for the link (NOT the auth-user id).
+    // Resolve by email — tenants.user_id is unreliable (it holds the landlord id
+    // in some rows and the tenant auth id in others).
+    let tenantsRowId: string;
     const { data: existingTenant } = await supabase
       .from('tenants')
-      .select('id, user_id, landlord_id')
-      .eq('user_id', tenant.tenantId)
+      .select('id')
+      .ilike('email', params.tenantEmail.trim())
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (existingTenant) {
+      tenantsRowId = existingTenant.id;
       // Update existing tenant to active
       await supabase
         .from('tenants')
@@ -1340,7 +1350,7 @@ export async function addTenantToProperty(params: {
         .eq('id', tenant.tenantId)
         .maybeSingle();
 
-      await supabase
+      const { data: newTenant, error: newTenantError } = await supabase
         .from('tenants')
         .insert({
           user_id: tenant.tenantId,
@@ -1352,7 +1362,14 @@ export async function addTenantToProperty(params: {
           status: 'active',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        });
+        })
+        .select('id')
+        .single();
+      if (newTenantError || !newTenant) {
+        console.error('❌ Failed to create tenant record:', newTenantError);
+        return null;
+      }
+      tenantsRowId = newTenant.id;
       console.log('✅ Created new tenant record with active status');
     }
 
@@ -1360,7 +1377,7 @@ export async function addTenantToProperty(params: {
       .from('tenant_property_links')
       .upsert(
         {
-          tenant_id: tenant.tenantId,
+          tenant_id: tenantsRowId,
           property_id: params.propertyId,
           unit_id: params.unitId || null,
           sub_unit_id: params.subUnitId || null,
@@ -1378,7 +1395,7 @@ export async function addTenantToProperty(params: {
     console.log('✅ Tenant property link created:', {
       status: status,
       landlord_id: params.landlordUserId,
-      tenant_id: tenant.tenantId,
+      tenant_id: tenantsRowId,
       link_data: data
     });
 
@@ -3745,16 +3762,20 @@ export async function replaceLeaseDocument(
 
   await updateLeaseInDb(existingLease.id, updates);
 
-  // Best-effort cleanup of old storage files
+  // Best-effort cleanup of old storage files — delete both document_url and
+  // signed_pdf_url if they differ (applies to fully-signed leases which have both).
   const oldUrls = [
     existingLease.document_url,
-    !fullySigned && existingLease.signed_pdf_url !== existingLease.document_url
+    existingLease.signed_pdf_url !== existingLease.document_url
       ? existingLease.signed_pdf_url
       : undefined,
   ].filter((u): u is string => !!u && u !== uploadResult.url);
 
   for (const url of oldUrls) {
-    await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS).catch(() => {});
+    const deleted = await deleteImage(url, STORAGE_BUCKETS.LEASE_DOCUMENTS);
+    if (!deleted) {
+      console.warn('[replaceLeaseDocument] Failed to delete old file:', url);
+    }
   }
 
   return { success: true };
@@ -3795,25 +3816,10 @@ export async function uploadLeaseDocument(
       return { success: true, url: urlData.publicUrl };
     }
 
-    // For native, read as base64
+    // For native: fetch as ArrayBuffer (Hermes doesn't support response.blob() or FileReader)
     const response = await fetch(uri);
-    const blob = await response.blob();
-    
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        resolve(dataUrl.split(',')[1]);
-      };
-      reader.readAsDataURL(blob);
-    });
-
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
+    const arrayBuffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
 
     const { data, error } = await supabase.storage
       .from(bucket)

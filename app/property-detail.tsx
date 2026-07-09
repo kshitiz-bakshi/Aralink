@@ -6,6 +6,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import {
   ActivityIndicator,
   Alert,
+  AlertButton,
   Dimensions,
   FlatList,
   Image,
@@ -23,7 +24,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { checkEntityHasTenant, createLease, DbLease, deleteImage, fetchLeasesByProperty, replaceLeaseDocument, STORAGE_BUCKETS, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { checkEntityHasTenant, createLease, DbLease, deleteImage, fetchLeasesByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
@@ -204,9 +205,15 @@ export default function PropertyDetailScreen() {
     }
   };
 
-  const handleTenantDetail = () => {
+  const handleTenantDetail = async () => {
     if (!property) return;
-    const tenants = getTenantsByProperty(property.id);
+    // Refresh tenants right before checking — the store can be stale/empty on first visit
+    if (user?.id) {
+      await loadTenants(user.id);
+    }
+    const tenants = useTenantStore.getState().tenants.filter(
+      t => String(t.propertyId) === String(property.id)
+    );
     if (tenants.length === 0) {
       Alert.alert('No Tenant', 'No tenant is currently assigned to this property.');
       return;
@@ -215,7 +222,8 @@ export default function PropertyDetailScreen() {
       router.push(`/tenant-detail?id=${tenants[0].id}` as any);
       return;
     }
-    router.push('/tenants' as any);
+    // Multiple tenants — show the tenant list scoped to this property only
+    router.push(`/tenants?propertyId=${property.id}` as any);
   };
 
   const handleUpdateProperty = (updates: Partial<Property>) => {
@@ -258,7 +266,7 @@ export default function PropertyDetailScreen() {
   };
 
   // Shared helper: pick a PDF, create a new lease record, upload, then navigate
-  const doCreateLeaseUpload = async (unitId?: string) => {
+  const doCreateLeaseUpload = async (unitId?: string, tenantId?: string) => {
     if (!property || !user?.id) return;
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -269,13 +277,18 @@ export default function PropertyDetailScreen() {
 
       setIsUploadingLease(true);
       const today = new Date().toISOString().split('T')[0];
+      // An uploaded lease is an already-executed document signed offline by
+      // both tenant and landlord — land it at Fully Signed (v3), ready for the
+      // landlord to activate, not as an unsigned draft to be sent.
       const draft = await createLease({
         user_id: user.id,
         property_id: property.id,
         ...(unitId ? { unit_id: unitId } : {}),
-        status: 'uploaded',
-        version: 1,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
+        status: 'signed_pending_move_in',
+        version: 3,
         effective_date: today,
+        signed_date: today,
       });
       if (!draft) {
         Alert.alert('Error', 'Failed to create lease record. Please try again.');
@@ -286,6 +299,12 @@ export default function PropertyDetailScreen() {
         Alert.alert('Error', uploadResult.error || 'Failed to upload document.');
         return;
       }
+      // The uploaded file carries both signatures, so it is both the lease
+      // document and the signed PDF.
+      await updateLeaseInDb(draft.id, {
+        document_url: uploadResult.url,
+        signed_pdf_url: uploadResult.url,
+      });
       const leases = await fetchLeasesByProperty(property.id);
       setPropertyLeases(leases);
       router.push(`/lease-detail?id=${draft.id}` as any);
@@ -322,33 +341,65 @@ export default function PropertyDetailScreen() {
     }
   };
 
-  const handleUploadLeaseFor = (unitId?: string, _roomId?: string) => {
+  const handleUploadLeaseFor = (unitId?: string, subUnitId?: string) => {
     if (!property || !user?.id) return;
 
-    // Instance 1 — no active tenant
+    // Step 1: Multi-unit — ask which unit first
+    if (!unitId && property.propertyType !== 'single_unit' && property.units.length > 0) {
+      const unitBtns: AlertButton[] = [
+        ...property.units.map(u => ({ text: u.name, onPress: () => handleUploadLeaseFor(u.id) })),
+        { text: 'Cancel', style: 'cancel' },
+      ];
+      Alert.alert('Select Unit', 'Which unit do you want to upload a lease for?', unitBtns);
+      return;
+    }
+
+    // Step 2: After unit is known, check if it has rooms — applies to both property types
+    const targetUnit = unitId
+      ? property.units.find(u => u.id === unitId)
+      : property.units[0]; // single_unit has exactly one unit
+    const rooms = targetUnit?.subUnits ?? [];
+    const effectiveUnitId = unitId ?? targetUnit?.id;
+
+    if (!subUnitId && rooms.length > 0) {
+      const roomBtns: AlertButton[] = [
+        ...rooms.map(r => ({
+          text: `Room ${r.name}`,
+          onPress: () => handleUploadLeaseFor(effectiveUnitId, r.id),
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ];
+      Alert.alert('Select Room', 'Which room do you want to upload a lease for?', roomBtns);
+      return;
+    }
+
+    // Step 3: Scope tenants by unit and optionally sub-unit
     const allTenants = getTenantsByProperty(property.id);
-    const scopedTenants = unitId
-      ? allTenants.filter(t => t.unit_id === unitId)
+    let scopedTenants = effectiveUnitId
+      ? allTenants.filter(t => t.unitId === effectiveUnitId)
       : allTenants;
+    if (subUnitId) scopedTenants = scopedTenants.filter(t => t.subUnitId === subUnitId);
     const activeTenants = scopedTenants.filter(t => t.status === 'active');
 
     if (activeTenants.length === 0) {
       Alert.alert(
         'No Active Tenant',
-        'There is no active tenant for this address. Add a tenant first, then upload the lease.',
+        effectiveUnitId
+          ? 'There is no active tenant for this unit. Add a tenant first, then upload the lease.'
+          : 'There is no active tenant for this property. Add a tenant first, then upload the lease.',
       );
       return;
     }
 
-    // Instance 2 — tenant exists but already has a non-terminated lease
+    // Step 4: Check for an existing lease for this unit
     const existingLease = propertyLeases.find(l => {
-      const unitMatch = unitId ? l.unit_id === unitId : true;
+      const unitMatch = effectiveUnitId ? l.unit_id === effectiveUnitId : !l.unit_id;
       return unitMatch && l.status !== 'terminated' && l.status !== 'rejected';
     });
 
     if (existingLease) {
       const t = activeTenants[0];
-      const tenantName = `${t.first_name} ${t.last_name}`.trim();
+      const tenantName = `${t.firstName} ${t.lastName}`.trim();
       Alert.alert(
         'Lease Already Exists',
         `There is already an active lease for ${tenantName}. Do you want to replace it with a new document?`,
@@ -360,8 +411,9 @@ export default function PropertyDetailScreen() {
       return;
     }
 
-    // Instance 3 — tenant exists, no existing lease → upload new
-    doCreateLeaseUpload(unitId);
+    // Step 5: No existing lease — upload new (link the active tenant so the
+    // signed lease is tied to them)
+    doCreateLeaseUpload(effectiveUnitId, activeTenants[0]?.id);
   };
 
   const handleAddPhotos = async () => {

@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +29,7 @@ import {
   fetchTenantTransactions,
   fetchLeasesByProperty,
   createLease,
+  updateLeaseInDb,
   uploadLeaseDocument,
   deleteLeaseWithCleanup,
   replaceLeaseDocument,
@@ -84,6 +85,7 @@ export default function TenantDetailScreen() {
     action: LeaseManageAction;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', isLoading: false });
+  const isPickingFileRef = useRef(false);
   
   const tenantData = id ? getTenantById(id) : null;
   const property = tenantData ? getPropertyById(tenantData.propertyId) : null;
@@ -191,22 +193,33 @@ export default function TenantDetailScreen() {
     setLeaseLoading(true);
     try {
       const today = new Date().toISOString().split('T')[0];
+      // An uploaded lease is an already-executed document signed offline by
+      // both tenant and landlord — land it at Fully Signed (v3), ready to
+      // activate, not as an unsigned draft.
       const draft = await createLease({
         user_id: user.id,
         property_id: tenantData.propertyId,
         ...(tenantData.unitId ? { unit_id: tenantData.unitId } : {}),
         tenant_id: tenantData.id,
-        status: 'uploaded',
-        version: 1,
+        status: 'signed_pending_move_in',
+        version: 3,
         effective_date: today,
+        signed_date: today,
       });
       if (!draft) { Alert.alert('Error', 'Failed to create lease record.'); return; }
 
       const uploadResult = await uploadLeaseDocument(picked.assets[0].uri, draft.id, user.id);
       if (!uploadResult.success) { Alert.alert('Error', uploadResult.error ?? 'Upload failed.'); return; }
 
-      setCurrentLease({ ...draft, document_url: uploadResult.url });
-      Alert.alert('Uploaded', 'Lease uploaded. Open lease detail to send it to the tenant.');
+      // The uploaded file carries both signatures, so it is both the lease
+      // document and the signed PDF.
+      await updateLeaseInDb(draft.id, {
+        document_url: uploadResult.url,
+        signed_pdf_url: uploadResult.url,
+      });
+
+      setCurrentLease({ ...draft, status: 'signed_pending_move_in', document_url: uploadResult.url, signed_pdf_url: uploadResult.url });
+      Alert.alert('Uploaded', 'Lease uploaded and marked as fully signed by both parties. You can activate it from the lease detail screen.');
       router.push(`/lease-detail?id=${draft.id}` as any);
     } catch {
       Alert.alert('Error', 'Failed to upload lease.');
@@ -232,22 +245,32 @@ export default function TenantDetailScreen() {
       return;
     }
 
-    // replace
-    setLeaseManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (picker presents on top of modal,
+    // avoiding the timing issue of dismissing the modal before the picker can present)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setLeaseManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(currentLease, picked.assets[0].uri, user.id);
-    setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      // Refresh lease from DB via re-fetch
-      const leases = await fetchLeasesByProperty(currentLease.property_id);
-      const updated = leases.find(l => l.id === currentLease.id) ?? null;
-      setCurrentLease(updated);
-      Alert.alert('Replaced', 'Lease document replaced successfully.');
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong.');
+      setLeaseManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(currentLease, picked.assets[0].uri, user.id);
+        setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          const leases = await fetchLeasesByProperty(currentLease.property_id);
+          const updated = leases.find(l => l.id === currentLease.id) ?? null;
+          setCurrentLease(updated);
+          Alert.alert('Replaced', 'Lease document replaced successfully.');
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong.');
+        }
+      } catch (e) {
+        setLeaseManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 

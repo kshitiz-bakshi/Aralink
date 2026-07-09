@@ -8,7 +8,7 @@
  * - Document version history
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -69,6 +69,7 @@ export default function LeaseDetailScreen() {
     action: LeaseManageAction;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', isLoading: false });
+  const isPickingFileRef = useRef(false);
 
   const handleUploadFinalSignature = async () => {
     try {
@@ -177,6 +178,49 @@ export default function LeaseDetailScreen() {
     if (!lease) return;
     setIsProcessing(true);
     try {
+      // Fast path: the lease already points at an existing tenant record
+      // (e.g. an offline-signed lease uploaded for a tenant who is already
+      // assigned to this property). No applicant conversion needed — make
+      // sure the property link is active, then activate the lease.
+      if (lease.tenant_id) {
+        const { data: linkedTenant } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('id', lease.tenant_id)
+          .maybeSingle();
+        if (linkedTenant) {
+          const { data: existingLink } = await supabase
+            .from('tenant_property_links')
+            .select('id, status')
+            .eq('tenant_id', lease.tenant_id)
+            .eq('property_id', lease.property_id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (existingLink && existingLink.status !== 'active') {
+            await supabase
+              .from('tenant_property_links')
+              .update({ status: 'active', updated_at: new Date().toISOString() })
+              .eq('id', existingLink.id);
+          } else if (!existingLink) {
+            await supabase.from('tenant_property_links').insert({
+              tenant_id: lease.tenant_id,
+              property_id: lease.property_id,
+              unit_id: lease.unit_id || null,
+              status: 'active',
+              created_via: 'lease_creation',
+              created_by_user_id: user!.id,
+              link_start_date: lease.effective_date || new Date().toISOString().split('T')[0],
+              updated_at: new Date().toISOString(),
+            });
+          }
+          await updateLeaseInDb(lease.id, { status: 'active' });
+          Alert.alert('Success', 'Lease activated — the tenancy is now in effect.');
+          loadLease();
+          return;
+        }
+      }
+
       // Resolve target email: prefer form_data, fallback to application
       let targetTenantEmail = lease.form_data?.tenantEmails?.[0];
       let applicantUserId: string | null = null;
@@ -488,19 +532,29 @@ export default function LeaseDetailScreen() {
       return;
     }
 
-    // replace — pick file first
-    setManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (avoids modal dismiss animation race)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
-    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      Alert.alert('Replaced', 'The lease document has been replaced.');
-      loadLease();
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          Alert.alert('Replaced', 'The lease document has been replaced.');
+          loadLease();
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+        }
+      } catch (e) {
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 
@@ -615,7 +669,7 @@ export default function LeaseDetailScreen() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
@@ -781,11 +835,9 @@ export default function LeaseDetailScreen() {
             ))}
           </View>
         )}
-      </ScrollView>
-
-      {/* Footer Actions */}
-      {isOwner && (
-        <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor, backgroundColor: bgColor }]}>
+        {/* Footer Actions */}
+        {isOwner && (
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor }]}>
           {canSend && (
             <TouchableOpacity
               style={[styles.sendButton, { backgroundColor: successColor, marginBottom: 12 }]}
@@ -835,7 +887,9 @@ export default function LeaseDetailScreen() {
               ) : (
                 <>
                   <MaterialCommunityIcons name="account-convert" size={20} color="#fff" />
-                  <ThemedText style={styles.sendButtonText}>Convert to Tenant</ThemedText>
+                  <ThemedText style={styles.sendButtonText}>
+                    {lease.tenant_id ? 'Activate Lease' : 'Convert to Tenant'}
+                  </ThemedText>
                 </>
               )}
             </TouchableOpacity>
@@ -927,7 +981,8 @@ export default function LeaseDetailScreen() {
             </TouchableOpacity>
           )}
         </View>
-      )}
+        )}
+      </ScrollView>
 
       <LeaseManageDialog
         visible={manageDialog.visible}
@@ -1077,12 +1132,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     paddingHorizontal: 16,
     paddingTop: 16,
+    marginTop: 8,
     borderTopWidth: 1,
   },
   sendButton: {

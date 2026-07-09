@@ -5,7 +5,7 @@
  * Allows viewing, downloading, and managing lease documents.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -62,6 +62,7 @@ export default function LeasesScreen() {
     lease: DbLease | null;
     isLoading: boolean;
   }>({ visible: false, action: 'delete', lease: null, isLoading: false });
+  const isPickingFileRef = useRef(false);
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -154,19 +155,29 @@ export default function LeasesScreen() {
       return;
     }
 
-    // replace — pick document first
-    setManageDialog(d => ({ ...d, visible: false }));
-    const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
-    if (picked.canceled) return;
+    // replace — open picker while dialog is still visible (avoids modal dismiss animation race)
+    if (isPickingFileRef.current) return;
+    isPickingFileRef.current = true;
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/pdf', copyToCacheDirectory: true });
+      if (picked.canceled) return;
 
-    setManageDialog(d => ({ ...d, visible: true, isLoading: true }));
-    const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
-    setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
-    if (result.success) {
-      await loadLeases();
-      Alert.alert('Replaced', 'The lease document has been replaced successfully.');
-    } else {
-      Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+      setManageDialog(d => ({ ...d, isLoading: true }));
+      try {
+        const result = await replaceLeaseDocument(lease, picked.assets[0].uri, user.id);
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        if (result.success) {
+          await loadLeases();
+          Alert.alert('Replaced', 'The lease document has been replaced successfully.');
+        } else {
+          Alert.alert('Replace Failed', result.error ?? 'Something went wrong. Please try again.');
+        }
+      } catch (e) {
+        setManageDialog(d => ({ ...d, isLoading: false, visible: false }));
+        Alert.alert('Replace Failed', 'An unexpected error occurred. Please try again.');
+      }
+    } finally {
+      isPickingFileRef.current = false;
     }
   };
 
@@ -467,7 +478,6 @@ export default function LeasesScreen() {
                     </ThemedText>
                   </TouchableOpacity>
                 )}
-                
                 {lease.document_url && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: chipBg }]}
@@ -479,7 +489,6 @@ export default function LeasesScreen() {
                 </ThemedText>
                   </TouchableOpacity>
                 )}
-
                 {(lease.status === 'generated' || lease.status === 'uploaded') && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: primaryColor }]}
@@ -491,7 +500,6 @@ export default function LeasesScreen() {
                 </ThemedText>
                   </TouchableOpacity>
                 )}
-
                 {leaseNeedsApplicantTenantConversion(lease) && (
                     <TouchableOpacity
                       style={[styles.actionButton, { backgroundColor: chipBg }]}
@@ -514,8 +522,6 @@ export default function LeasesScreen() {
                     <ThemedText style={[styles.actionButtonText, { color: textColor }]}>Replace</ThemedText>
                   </TouchableOpacity>
                 )}
-
-                {/* Delete — landlord only, any status except terminated */}
                 {user?.role === 'landlord' && lease.status !== 'terminated' && (
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: dangerBg }]}
@@ -676,7 +682,8 @@ const styles = StyleSheet.create({
   leaseActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 12,
+    alignItems: 'center',
+    padding: 10,
     gap: 8,
     borderTopWidth: 1,
   },
@@ -684,12 +691,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
     borderRadius: 8,
   },
   actionButtonText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   fab: {
