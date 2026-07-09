@@ -380,6 +380,44 @@ export default function LeaseWizardStep6() {
           </View>
         )}
 
+        {/* Document actions — shown at top once generated so View/Download is reachable without scrolling */}
+        {documentUrl && (
+          <View style={[styles.documentCard, { backgroundColor: cardBgColor, borderColor }]}>
+            <View style={styles.documentHeader}>
+              <MaterialCommunityIcons
+                name={isSent ? 'file-check' : 'file-document'}
+                size={24}
+                color={isSent ? successColor : primaryColor}
+              />
+              <View style={styles.documentInfo}>
+                <ThemedText style={[styles.documentTitle, { color: textColor }]}>
+                  Lease Document {documentVersion ? `v${documentVersion}` : ''}
+                </ThemedText>
+                <ThemedText style={[styles.documentMeta, { color: secondaryTextColor }]}>
+                  {engineUsed === 'xfa' ? 'Official Template' : engineUsed === 'uploaded' ? 'Uploaded' : 'Generated PDF'}
+                  {isSent && ' • Sent to Tenant'}
+                </ThemedText>
+              </View>
+            </View>
+            <View style={styles.documentActions}>
+              <TouchableOpacity
+                style={[styles.documentActionButton, { backgroundColor: primaryColor }]}
+                onPress={handleViewDocument}
+              >
+                <MaterialCommunityIcons name="eye" size={18} color={onPrimaryColor} />
+                <ThemedText style={[styles.documentActionText, { color: onPrimaryColor }]}>View</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.documentActionButton, { backgroundColor: successColor }]}
+                onPress={handleDownloadDocument}
+              >
+                <MaterialCommunityIcons name="download" size={18} color="#fff" />
+                <ThemedText style={styles.documentActionText}>Download</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* Review Sections */}
         {renderSection('account-tie', 'Parties', [
           { label: 'Landlord', value: formData.landlordName || 'Not set' },
@@ -435,43 +473,6 @@ export default function LeaseWizardStep6() {
           { label: 'Additional Terms', value: formData.additionalTerms ? 'Yes (see below)' : 'None' },
         ])}
 
-        {/* Document Status Card */}
-        {documentUrl && (
-          <View style={[styles.documentCard, { backgroundColor: cardBgColor, borderColor }]}>
-            <View style={styles.documentHeader}>
-              <MaterialCommunityIcons 
-                name={isSent ? 'file-check' : 'file-document'} 
-                size={24} 
-                color={isSent ? successColor : primaryColor} 
-              />
-              <View style={styles.documentInfo}>
-                <ThemedText style={[styles.documentTitle, { color: textColor }]}>
-                  Lease Document {documentVersion ? `v${documentVersion}` : ''}
-                </ThemedText>
-                <ThemedText style={[styles.documentMeta, { color: secondaryTextColor }]}>
-                  {engineUsed === 'xfa' ? 'Official Template' : engineUsed === 'uploaded' ? 'Uploaded' : 'Generated PDF'}
-                  {isSent && ' • Sent to Tenant'}
-                </ThemedText>
-              </View>
-            </View>
-            <View style={styles.documentActions}>
-              <TouchableOpacity 
-                style={[styles.documentActionButton, { backgroundColor: primaryColor }]}
-                onPress={handleViewDocument}
-              >
-                <MaterialCommunityIcons name="eye" size={18} color={onPrimaryColor} />
-                <ThemedText style={[styles.documentActionText, { color: onPrimaryColor }]}>View</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.documentActionButton, { backgroundColor: successColor }]}
-                onPress={handleDownloadDocument}
-              >
-                <MaterialCommunityIcons name="download" size={18} color="#fff" />
-                <ThemedText style={styles.documentActionText}>Download</ThemedText>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
       </ScrollView>
 
       {/* Send Lease Modal */}
@@ -557,42 +558,23 @@ export default function LeaseWizardStep6() {
 
       {/* Footer Actions */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor, backgroundColor: bgColor }]}>
-        {/* Row 1: Upload and Generate */}
-        <View style={styles.footerRow}>
-          <TouchableOpacity
-            style={[styles.uploadButton, { borderColor }]}
-            onPress={handleUpload}
-            disabled={isGenerating || isUploading || isSending}
-          >
-            {isUploading ? (
-              <ActivityIndicator size="small" color={primaryColor} />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="upload" size={18} color={primaryColor} />
-                <ThemedText style={[styles.uploadButtonText, { color: primaryColor }]}>
-                  Upload
-                </ThemedText>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.generateButton, { backgroundColor: primaryColor }]}
-            onPress={handleGenerate}
-            disabled={isGenerating || isUploading || isSending}
-          >
-            {isGenerating ? (
-              <ActivityIndicator size="small" color={onPrimaryColor} />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="file-document-outline" size={18} color={onPrimaryColor} />
-                <ThemedText style={[styles.generateButtonText, { color: onPrimaryColor }]}>
-                  {documentUrl ? 'Regenerate' : 'Generate'}
-                </ThemedText>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
+        {/* Generate / Regenerate */}
+        <TouchableOpacity
+          style={[styles.generateButton, { backgroundColor: primaryColor }]}
+          onPress={handleGenerate}
+          disabled={isGenerating || isUploading || isSending}
+        >
+          {isGenerating ? (
+            <ActivityIndicator size="small" color={onPrimaryColor} />
+          ) : (
+            <>
+              <MaterialCommunityIcons name="file-document-outline" size={18} color={onPrimaryColor} />
+              <ThemedText style={[styles.generateButtonText, { color: onPrimaryColor }]}>
+                {documentUrl ? 'Regenerate' : 'Generate'}
+              </ThemedText>
+            </>
+          )}
+        </TouchableOpacity>
 
         {/* Row 2: Send to Tenant (only show if document exists) */}
         {documentUrl && !isSent && (
@@ -763,7 +745,6 @@ const styles = StyleSheet.create({
   },
   generateButton: {
     flexDirection: 'row',
-    flex: 1,
     height: 48,
     borderRadius: 12,
     alignItems: 'center',

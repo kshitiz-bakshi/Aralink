@@ -140,10 +140,10 @@ export default function LeaseWizardStep5() {
       {/* Progress */}
       <View style={[styles.progressContainer, { borderBottomColor: borderColor }]}>
         <View style={styles.progressBar}>
-          <View style={[styles.progressFill, { width: '83.33%', backgroundColor: primaryColor }]} />
+          <View style={[styles.progressFill, { width: '62.5%', backgroundColor: primaryColor }]} />
         </View>
         <ThemedText style={[styles.progressText, { color: secondaryTextColor }]}>
-          5 of 6
+          5 of 8
         </ThemedText>
       </View>
 
