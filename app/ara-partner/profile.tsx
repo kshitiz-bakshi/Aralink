@@ -142,8 +142,7 @@ export default function AraPartnerProfile() {
           <ThemedText style={[styles.headerTitle, { color: textColor }]}>Profile & Banking</ThemedText>
           {!isEditing ? (
             <TouchableOpacity onPress={() => setIsEditing(true)} style={styles.editBtn}>
-              <MaterialCommunityIcons name="pencil" size={16} color={PRIMARY} />
-              <ThemedText style={[styles.editBtnText, { color: PRIMARY }]}>Edit</ThemedText>
+              <MaterialCommunityIcons name="pencil-outline" size={24} color={PRIMARY} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity onPress={handleCancelEdit}>
@@ -280,7 +279,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontWeight: '700' },
   editBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  editBtnText: { fontWeight: '600', fontSize: 14 },
   cancelText: { fontSize: 14, fontWeight: '500' },
   scroll: { paddingHorizontal: 20, paddingBottom: 40 },
   sectionTitle: { fontSize: 15, fontWeight: '700', marginTop: 20, marginBottom: 8 },

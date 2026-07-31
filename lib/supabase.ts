@@ -667,10 +667,10 @@ export async function updatePropertyInDb(propertyId: string, updates: Partial<Db
       })
       .eq('id', propertyId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('Error updating property:', error);
+      console.error('Error updating property:', error.message, error.details, error.hint, error.code);
       return null;
     }
 
@@ -762,10 +762,10 @@ export async function updateUnitInDb(unitId: string, updates: Partial<DbUnit>): 
       })
       .eq('id', unitId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('Error updating unit:', error);
+      console.error('Error updating unit:', error.message, error.details, error.hint, error.code);
       return null;
     }
 
@@ -826,10 +826,10 @@ export async function updateSubUnitInDb(subUnitId: string, updates: Partial<DbSu
       })
       .eq('id', subUnitId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('Error updating sub unit:', error);
+      console.error('Error updating sub unit:', error.message, error.details, error.hint, error.code);
       return null;
     }
 
@@ -911,12 +911,17 @@ export async function fetchTenants(userId: string): Promise<DbTenant[]> {
       const propertyIdsAsStrings = propertyIds.map(id => String(id));
       console.log('📋 Property IDs as strings:', propertyIdsAsStrings);
 
-      // Get ACTIVE tenant IDs for these properties via tenant_property_links
+      // Get tenant IDs for these properties via tenant_property_links.
+      // Include 'pending_invite' as well as 'active' — a tenant whose lease
+      // starts in the future is created with status 'pending_invite' and only
+      // gets flipped to 'active' when the tenant opens their own dashboard on
+      // or after the move-in date (see activateScheduledTenancyForUser). Landlords
+      // still need to be able to find/manage that tenant before that happens.
       const { data: links, error: linksError } = await supabase
         .from('tenant_property_links')
         .select('tenant_id, status, property_id, unit_id, sub_unit_id')
         .in('property_id', propertyIdsAsStrings)
-        .eq('status', 'active');
+        .in('status', ['active', 'pending_invite']);
 
       if (linksError) {
         console.error('❌ Error fetching tenant_property_links:', linksError);
@@ -1206,6 +1211,7 @@ export interface DbApplication {
   user_id: string;
   property_id: string | null;
   unit_id?: string | null;
+  sub_unit_id?: string | null;
   applicant_name: string;
   applicant_email: string;
   applicant_phone?: string | null;
@@ -1611,6 +1617,21 @@ export async function approvePropertyApplication(params: {
   }
 }
 
+// Edge functions are called via a raw `fetch` (not supabase.functions.invoke),
+// so we must attach the access token ourselves. `getSession()` alone can hand
+// back a token that's unexpired but was signed under an old/rotated JWT
+// signing key — the project-side gateway then rejects it with
+// "UNAUTHORIZED_LEGACY_JWT" even though the client thinks the session is fine.
+// Forcing a refresh mints a token signed with the current key before we call out.
+async function getFreshAccessToken(): Promise<string | null> {
+  const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+  if (!refreshError && refreshed.session?.access_token) {
+    return refreshed.session.access_token;
+  }
+  const { data: sessionData } = await supabase.auth.getSession();
+  return sessionData.session?.access_token ?? null;
+}
+
 export async function inviteTenantToProperty(params: {
   propertyId: string;
   tenantEmail: string;
@@ -1622,8 +1643,7 @@ export async function inviteTenantToProperty(params: {
   rentAmount?: number; // Monthly rent amount
 }): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token;
+    const accessToken = await getFreshAccessToken();
 
     if (!supabaseUrl || !supabaseAnonKey) {
       return { error: 'Supabase credentials are missing in env.' };
@@ -1646,19 +1666,24 @@ export async function inviteTenantToProperty(params: {
     const rawText = await response.text();
     if (!response.ok) {
       let message = rawText || `Invite failed with status ${response.status}`;
+      let code: string | undefined;
       try {
         const parsed = JSON.parse(rawText);
+        code = parsed?.code;
         message = parsed?.error || parsed?.message || message;
       } catch {
         // keep raw text
       }
-      console.error('Error inviting tenant:', { message, status: response.status, rawText });
+      console.error('Error inviting tenant:', { message, code, status: response.status, rawText });
+      if (response.status === 401 && code === 'UNAUTHORIZED_LEGACY_JWT') {
+        return { error: 'Your session has expired. Please sign out and sign back in, then try again.' };
+      }
       return { error: `${message} (status ${response.status})` };
     }
 
     const data = rawText ? JSON.parse(rawText) : {};
-    return { 
-      inviteId: data?.inviteId, 
+    return {
+      inviteId: data?.inviteId,
       token: data?.token,
       notificationQueued: data?.notificationQueued,
       emailQueued: data?.emailQueued,
@@ -1682,9 +1707,8 @@ export async function inviteApplicantToProperty(params: {
 }): Promise<{ inviteId?: string; token?: string; notificationQueued?: boolean; emailQueued?: boolean; error?: string } | null> {
   try {
     console.log('🚀 inviteApplicantToProperty called with params:', JSON.stringify(params, null, 2));
-    
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData.session?.access_token;
+
+    const accessToken = await getFreshAccessToken();
 
     if (!supabaseUrl || !supabaseAnonKey) {
       return { error: 'Supabase credentials are missing in env.' };
@@ -1709,13 +1733,18 @@ export async function inviteApplicantToProperty(params: {
     
     if (!response.ok) {
       let message = rawText || `Invite failed with status ${response.status}`;
+      let code: string | undefined;
       try {
         const parsed = JSON.parse(rawText);
+        code = parsed?.code;
         message = parsed?.error || parsed?.message || message;
       } catch {
         // keep raw text
       }
-      console.error('❌ Error inviting applicant:', { message, status: response.status, rawText });
+      console.error('❌ Error inviting applicant:', { message, code, status: response.status, rawText });
+      if (response.status === 401 && code === 'UNAUTHORIZED_LEGACY_JWT') {
+        return { error: 'Your session has expired. Please sign out and sign back in, then try again.' };
+      }
       return { error: `${message} (status ${response.status})` };
     }
 

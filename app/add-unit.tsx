@@ -6,7 +6,6 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -15,15 +14,15 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
-import { fmtDate } from '@/lib/dateUtils';
+import { fmtDate, toISODateLocal } from '@/lib/dateUtils';
 
 export default function AddUnitScreen() {
   const colorScheme = useColorScheme();
@@ -101,13 +100,12 @@ export default function AddUnitScreen() {
 
   const formatDate = (iso: string) => fmtDate(iso, '');
 
-  const handleDateChange = (_: any, date?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(null);
-    if (!date || !showDatePicker) return;
-    const iso = date.toISOString().split('T')[0];
+  const handleDateConfirm = (date: Date) => {
+    const iso = toISODateLocal(date);
     if (showDatePicker === 'availability') setFormData(prev => ({ ...prev, availabilityDate: iso }));
     else if (showDatePicker === 'leaseStart') setFormData(prev => ({ ...prev, leaseStartDate: iso }));
     else if (showDatePicker === 'leaseEnd') setFormData(prev => ({ ...prev, leaseEndDate: iso }));
+    setShowDatePicker(null);
   };
 
   const getDateValue = (iso: string) => iso ? new Date(iso) : new Date();
@@ -439,56 +437,20 @@ export default function AddUnitScreen() {
               </View>
             </View>
 
-            {/* Android: renders inline */}
-            {showDatePicker && Platform.OS === 'android' && (
-              <DateTimePicker
-                value={getDateValue(
-                  showDatePicker === 'availability' ? formData.availabilityDate :
-                  showDatePicker === 'leaseStart' ? formData.leaseStartDate :
-                  formData.leaseEndDate
-                )}
-                mode="date"
-                display="default"
-                onChange={handleDateChange}
-              />
-            )}
-
-            {/* iOS: render in a modal so it's never clipped by the scroll view */}
-            <Modal
-              visible={showDatePicker !== null && Platform.OS === 'ios'}
-              transparent
-              animationType="slide"
-            >
-              <View style={styles.datePickerOverlay}>
-                <View style={[styles.datePickerSheet, { backgroundColor: cardBgColor }]}>
-                  <View style={[styles.datePickerHeader, { borderBottomColor: borderColor }]}>
-                    <ThemedText style={[styles.datePickerTitle, { color: textColor }]}>
-                      {showDatePicker === 'availability' ? 'Availability Date' :
-                       showDatePicker === 'leaseStart' ? 'Lease Start Date' : 'Lease End Date'}
-                    </ThemedText>
-                    <TouchableOpacity
-                      style={[styles.datePickerDone, { backgroundColor: primaryColor }]}
-                      onPress={() => setShowDatePicker(null)}
-                    >
-                      <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Done</ThemedText>
-                    </TouchableOpacity>
-                  </View>
-                  {showDatePicker && (
-                    <DateTimePicker
-                      value={getDateValue(
-                        showDatePicker === 'availability' ? formData.availabilityDate :
-                        showDatePicker === 'leaseStart' ? formData.leaseStartDate :
-                        formData.leaseEndDate
-                      )}
-                      mode="date"
-                      display="spinner"
-                      onChange={handleDateChange}
-                      style={{ width: '100%' }}
-                    />
-                  )}
-                </View>
-              </View>
-            </Modal>
+            <AppDatePicker
+              visible={showDatePicker !== null}
+              value={getDateValue(
+                showDatePicker === 'availability' ? formData.availabilityDate :
+                showDatePicker === 'leaseStart' ? formData.leaseStartDate :
+                formData.leaseEndDate
+              )}
+              onConfirm={handleDateConfirm}
+              onCancel={() => setShowDatePicker(null)}
+              title={
+                showDatePicker === 'availability' ? 'Availability Date' :
+                showDatePicker === 'leaseStart' ? 'Lease Start Date' : 'Lease End Date'
+              }
+            />
           </View>
 
           {/* Photos */}

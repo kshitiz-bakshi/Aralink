@@ -312,7 +312,7 @@ export default function AddPropertyScreen() {
                 onPress={toggleAddressMode}
               >
                 <MaterialCommunityIcons 
-                  name={manualAddressMode ? "map-search" : "pencil"} 
+                  name={manualAddressMode ? "map-search" : "pencil-outline"}
                   size={16} 
                   color={primaryColor} 
                 />

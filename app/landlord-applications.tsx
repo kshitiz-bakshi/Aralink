@@ -30,6 +30,8 @@ interface Application {
   submitted_at: string;
   created_at: string;
   property_id?: string;
+  unit_id?: string | null;
+  sub_unit_id?: string | null;
 }
 
 export default function LandlordApplicationsScreen() {
@@ -326,7 +328,11 @@ export default function LandlordApplicationsScreen() {
                 const allTenantNames = [item.applicant_name || '', ...coApplicantNames];
                 resetWizard();
                 setTenantId(null, 'applicant', item.id);
-                setPropertyContext({ propertyId: item.property_id || '' });
+                setPropertyContext({
+                  propertyId: item.property_id || '',
+                  unitId: item.unit_id || undefined,
+                  subUnitId: item.sub_unit_id || undefined,
+                });
                 updateFormData('tenantNames', allTenantNames);
 
                 router.push({

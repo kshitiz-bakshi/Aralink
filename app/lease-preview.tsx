@@ -192,6 +192,7 @@ export default function LeasePreviewScreen() {
           <TouchableOpacity
             style={[styles.editButton, { borderColor }]}
             onPress={() => router.back()}>
+            <MaterialCommunityIcons name="pencil-outline" size={18} color={textPrimaryColor} />
             <ThemedText style={[styles.editButtonText, { color: textPrimaryColor }]}>Edit Details</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity
@@ -293,6 +294,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
   },
   editButtonText: {
     fontSize: 16,

@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -16,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import PropertyAddressSelector, { SelectedPropertyData } from '@/components/PropertyAddressSelector';
@@ -371,19 +371,16 @@ export default function AddTransactionScreen() {
             </TouchableOpacity>
           </View>
 
-          {showDatePicker && (
-            <DateTimePicker
-              value={formData.date}
-              mode="date"
-              display="default"
-              onChange={(event, selectedDate) => {
-                setShowDatePicker(Platform.OS === 'ios');
-                if (selectedDate) {
-                  setFormData(prev => ({ ...prev, date: selectedDate }));
-                }
-              }}
-            />
-          )}
+          <AppDatePicker
+            visible={showDatePicker}
+            value={formData.date}
+            onConfirm={(date) => {
+              setFormData(prev => ({ ...prev, date }));
+              setShowDatePicker(false);
+            }}
+            onCancel={() => setShowDatePicker(false)}
+            title="Transaction Date"
+          />
 
           {/* Property Selection */}
           <View style={styles.inputGroup}>

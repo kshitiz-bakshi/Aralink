@@ -7,7 +7,6 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -18,9 +17,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
 import { useAuth } from '@/hooks/use-auth';
 import { fmtDateTime } from '@/lib/dateUtils';
@@ -273,18 +272,18 @@ export default function LandlordMaintenanceCreateScreen() {
                 {fmtDateTime(availabilityDate.toISOString())}
               </Text>
             </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker
-                value={availabilityDate}
-                mode="datetime"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                minimumDate={new Date()}
-                onChange={(_, date) => {
-                  if (Platform.OS === 'android') setShowDatePicker(false);
-                  if (date) setAvailabilityDate(date);
-                }}
-              />
-            )}
+            <AppDatePicker
+              visible={showDatePicker}
+              value={availabilityDate}
+              mode="datetime"
+              minimumDate={new Date()}
+              onConfirm={(date) => {
+                setAvailabilityDate(date);
+                setShowDatePicker(false);
+              }}
+              onCancel={() => setShowDatePicker(false)}
+              title="Availability"
+            />
           </FormInput>
 
           <FormInput label="Photos / Video" description="Optional, up to 5 MB each.">

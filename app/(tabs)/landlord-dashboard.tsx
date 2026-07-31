@@ -14,16 +14,15 @@ import {
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React from 'react';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import RentChart from '@/components/RentChart';
 import { ThemedText } from '@/components/themed-text';
 import { fmtShortDate, fmtDateTime, toISODateLocal } from '@/lib/dateUtils';
@@ -820,22 +819,16 @@ export default function LandlordDashboardScreen() {
                 {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCRStartPicker && (
-              <DateTimePicker
-                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCRStartPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCRStartPicker(false)}>
-                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCRStartPicker}
+              value={crDraftStart}
+              onConfirm={(date) => {
+                setCrDraftStart(toISODateLocal(date));
+                setShowCRStartPicker(false);
+              }}
+              onCancel={() => setShowCRStartPicker(false)}
+              title="Start Date"
+            />
 
             <TouchableOpacity
               style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
@@ -845,22 +838,16 @@ export default function LandlordDashboardScreen() {
                 {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCREndPicker && (
-              <DateTimePicker
-                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCREndPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCREndPicker(false)}>
-                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCREndPicker}
+              value={crDraftEnd}
+              onConfirm={(date) => {
+                setCrDraftEnd(toISODateLocal(date));
+                setShowCREndPicker(false);
+              }}
+              onCancel={() => setShowCREndPicker(false)}
+              title="End Date"
+            />
 
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity

@@ -8,12 +8,14 @@ import {
   DbProperty,
   DbSubUnit,
   DbUnit,
+  deleteImage,
   deletePropertyFromDb,
   deleteSubUnitFromDb,
   deleteUnitFromDb,
   fetchProperties,
   fetchSubUnitsForUnit,
   fetchUnitsForProperty,
+  STORAGE_BUCKETS,
   updatePropertyInDb,
   updateSubUnitInDb,
   updateUnitInDb,
@@ -642,8 +644,20 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   },
   
   deleteSubUnit: async (propertyId, unitId, subUnitId, userId) => {
+    // Capture the room's photos before it's archived/deleted so we can clean
+    // them out of Storage — the DB cascade (archive_and_delete_subunit) can't
+    // safely reach into Storage itself, only its own tables.
+    const unit = get().properties.find(p => p.id === propertyId)?.units.find(u => u.id === unitId);
+    const subUnit = unit?.subUnits.find(su => su.id === subUnitId);
+    const photosToDelete = subUnit?.photos ?? [];
+
     const result = await deleteSubUnitFromDb(subUnitId, userId);
     if (result.deleted) {
+      if (photosToDelete.length > 0) {
+        await Promise.all(
+          photosToDelete.map(url => deleteImage(url, STORAGE_BUCKETS.UNIT_PHOTOS).catch(() => {}))
+        );
+      }
       set((state) => ({
         properties: state.properties.map((p) =>
           p.id === propertyId

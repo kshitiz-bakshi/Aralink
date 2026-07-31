@@ -172,23 +172,29 @@ export default function LeaseWizardIndex() {
           
           console.log('📋 Store tenant names after update:', LeaseStore.getState().formData.tenantNames);
           
-          // Get property info for prefilling address
-          const property = getPropertyById(application.property_id);
+          // Get property info for prefilling address. The store may not be
+          // loaded yet (wizard opened straight from Applications) — load it
+          // on a miss instead of silently skipping the prefill.
+          let property = getPropertyById(application.property_id);
+          if (!property && user?.id) {
+            await usePropertyStore.getState().loadFromSupabase(user.id);
+            property = usePropertyStore.getState().getPropertyById(application.property_id);
+          }
           if (property) {
+            // Build "Unit - Room" info from the application's unit/sub-unit,
+            // for every property type (same format as the propertyId flow).
             let unitInfo = '';
-            
-            // Handle different property types
-            if (property.propertyType === 'multi_unit' && application.unit_id) {
-              const unit = property.units?.find(u => u.id === application.unit_id);
-              if (unit && application.sub_unit_id) {
-                const subUnit = unit.subUnits?.find((s: SubUnit) => s.id === application.sub_unit_id);
-                unitInfo = subUnit?.name || unit.name || '';
-              } else if (unit) {
-                unitInfo = unit.name || '';
+            if (application.unit_id && property.units) {
+              const unit = property.units.find(u => u.id === application.unit_id);
+              if (unit) {
+                const room = application.sub_unit_id
+                  ? unit.subUnits?.find((s: SubUnit) => s.id === application.sub_unit_id)
+                  : undefined;
+                unitInfo = [room?.name, unit.name].filter(Boolean).join(' - ');
               }
             } else if (application.sub_unit_id) {
               const subUnit = property.units
-                .flatMap(u => u.subUnits || [])
+                ?.flatMap(u => u.subUnits || [])
                 .find((s: SubUnit) => s.id === application.sub_unit_id);
               unitInfo = subUnit?.name || '';
             }
@@ -201,6 +207,13 @@ export default function LeaseWizardIndex() {
               province: property.state || 'ON',
               postalCode: property.zipCode || '',
             });
+          } else {
+            console.warn('⚠️ Property not found for application — address not prefilled:', application.property_id);
+          }
+
+          // Prefill landlord info (parity with the propertyId flow)
+          if (user) {
+            prefillLandlordInfo(property?.landlordName || user.name, user.email, user.phone);
           }
         }
       } catch (error) {
@@ -223,19 +236,15 @@ export default function LeaseWizardIndex() {
       // Prefill from property
       const property = getPropertyById(params.propertyId);
       if (property) {
-        // Find unit info if unitId provided
+        // Find unit info if unitId provided — "SubUnit - Unit" format
         let unitInfo = '';
         if (params.unitId && property.units) {
           const unit = property.units.find(u => u.id === params.unitId);
           if (unit) {
-            unitInfo = unit.name || '';
-            // Check for room/subunit
-            if (params.roomId && unit.subUnits) {
-              const room = unit.subUnits.find(r => r.id === params.roomId);
-              if (room) {
-                unitInfo = `${unit.name} - ${room.name}`;
-              }
-            }
+            const room = params.roomId
+              ? unit.subUnits?.find(r => r.id === params.roomId)
+              : undefined;
+            unitInfo = [room?.name, unit.name].filter(Boolean).join(' - ');
           }
         }
         

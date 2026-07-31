@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Alert, Platform } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, TextInput, View, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -96,18 +96,6 @@ export default function TenantLeaseStep1Screen() {
     return `${month}/${day}/${year}`;
   };
 
-  const handleDateChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowDatePicker(false);
-    }
-    if (date) {
-      setSelectedDate(date);
-      const formattedDate = formatDate(date);
-      setFormData({ ...formData, dob: formattedDate });
-      if (errors.dob) setErrors({ ...errors, dob: '' });
-    }
-  };
-
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: borderColor }]}>
@@ -195,15 +183,20 @@ export default function TenantLeaseStep1Screen() {
                 </TouchableOpacity>
               </View>
               {errors.dob && <ThemedText style={styles.errorText}>{errors.dob}</ThemedText>}
-              {showDatePicker && (
-                <DateTimePicker
-                  value={selectedDate}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={handleDateChange}
-                  maximumDate={new Date()}
-                />
-              )}
+              <AppDatePicker
+                visible={showDatePicker}
+                value={selectedDate}
+                maximumDate={new Date()}
+                onConfirm={(date) => {
+                  setSelectedDate(date);
+                  const formattedDate = formatDate(date);
+                  setFormData({ ...formData, dob: formattedDate });
+                  if (errors.dob) setErrors({ ...errors, dob: '' });
+                  setShowDatePicker(false);
+                }}
+                onCancel={() => setShowDatePicker(false)}
+                title="Date of Birth"
+              />
             </View>
 
             <View style={styles.formGroup}>

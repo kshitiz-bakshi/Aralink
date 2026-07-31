@@ -64,6 +64,7 @@ export default function PropertyAddressSelector({
   const [step, setStep] = useState<'property' | 'unit' | 'subunit'>('property');
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<Unit | null>(null);
+  const [selectedSubUnit, setSelectedSubUnit] = useState<SubUnit | null>(null);
 
   // Theme colors
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -90,28 +91,43 @@ export default function PropertyAddressSelector({
           const unit = prop.units?.find(u => u.id === selectedUnitId);
           if (unit) {
             setSelectedUnit(unit);
+            if (selectedSubUnitId) {
+              const subUnit = unit.subUnits?.find(s => s.id === selectedSubUnitId);
+              if (subUnit) setSelectedSubUnit(subUnit);
+            }
+          }
+        } else if (selectedSubUnitId) {
+          // Sub-unit without an explicit unit (single-unit property with rooms)
+          for (const unit of prop.units || []) {
+            const subUnit = unit.subUnits?.find(s => s.id === selectedSubUnitId);
+            if (subUnit) {
+              setSelectedUnit(unit);
+              setSelectedSubUnit(subUnit);
+              break;
+            }
           }
         }
       }
     }
-  }, [selectedPropertyId, selectedUnitId, properties]);
+  }, [selectedPropertyId, selectedUnitId, selectedSubUnitId, properties]);
 
-  // Build display text
+  // Build display text — includes unit and sub-unit as "SubUnit - Unit"
   const displayText = useMemo(() => {
     if (!selectedProperty) return '';
-    
+
     let text = selectedProperty.address1 || selectedProperty.name || 'Unknown Property';
-    
+
     if (selectedProperty.city) {
       text += `, ${selectedProperty.city}`;
     }
-    
-    if (selectedUnit) {
-      text += ` - ${selectedUnit.name}`;
+
+    const unitPart = [selectedSubUnit?.name, selectedUnit?.name].filter(Boolean).join(' - ');
+    if (unitPart) {
+      text += ` - ${unitPart}`;
     }
-    
+
     return text;
-  }, [selectedProperty, selectedUnit]);
+  }, [selectedProperty, selectedUnit, selectedSubUnit]);
 
   // Get full address helper
   const getFullAddress = (property: Property): string => {
@@ -174,6 +190,10 @@ export default function PropertyAddressSelector({
 
   // Complete the selection and call callback
   const completeSelection = (property: Property, unit?: Unit, subUnit?: SubUnit) => {
+    // Keep local state in sync so displayText shows the full selection
+    setSelectedUnit(unit ?? null);
+    setSelectedSubUnit(subUnit ?? null);
+
     // Calculate rent amount based on level
     let rentAmount: number | undefined;
     if (subUnit?.rentPrice) {
@@ -203,6 +223,7 @@ export default function PropertyAddressSelector({
     if (step === 'subunit') {
       setStep('unit');
       setSelectedUnit(null);
+      setSelectedSubUnit(null);
     } else if (step === 'unit') {
       setStep('property');
       setSelectedProperty(null);

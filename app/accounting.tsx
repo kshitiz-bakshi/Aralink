@@ -7,16 +7,15 @@ import {
   AppState,
   AppStateStatus,
   Modal,
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { fmtShortDate, toISODateLocal } from '@/lib/dateUtils';
 import { ThemedView } from '@/components/themed-view';
@@ -742,22 +741,16 @@ export default function AccountingScreen() {
                 {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCRStartPicker && (
-              <DateTimePicker
-                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCRStartPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCRStartPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCRStartPicker}
+              value={crDraftStart}
+              onConfirm={(date) => {
+                setCrDraftStart(toISODateLocal(date));
+                setShowCRStartPicker(false);
+              }}
+              onCancel={() => setShowCRStartPicker(false)}
+              title="Start Date"
+            />
 
             <TouchableOpacity
               style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
@@ -767,22 +760,16 @@ export default function AccountingScreen() {
                 {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCREndPicker && (
-              <DateTimePicker
-                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCREndPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowCREndPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCREndPicker}
+              value={crDraftEnd}
+              onConfirm={(date) => {
+                setCrDraftEnd(toISODateLocal(date));
+                setShowCREndPicker(false);
+              }}
+              onCancel={() => setShowCREndPicker(false)}
+              title="End Date"
+            />
 
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity
@@ -835,22 +822,16 @@ export default function AccountingScreen() {
                 {propCrDraftStart ? fmtShortDate(propCrDraftStart) : 'Start Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showPropCRStartPicker && (
-              <DateTimePicker
-                value={propCrDraftStart ? new Date(propCrDraftStart + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowPropCRStartPicker(false);
-                  if (date) setPropCrDraftStart(date.toISOString().split('T')[0]);
-                }}
-              />
-            )}
-            {showPropCRStartPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowPropCRStartPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showPropCRStartPicker}
+              value={propCrDraftStart}
+              onConfirm={(date) => {
+                setPropCrDraftStart(toISODateLocal(date));
+                setShowPropCRStartPicker(false);
+              }}
+              onCancel={() => setShowPropCRStartPicker(false)}
+              title="Start Date"
+            />
 
             <TouchableOpacity
               style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
@@ -860,22 +841,16 @@ export default function AccountingScreen() {
                 {propCrDraftEnd ? fmtShortDate(propCrDraftEnd) : 'End Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showPropCREndPicker && (
-              <DateTimePicker
-                value={propCrDraftEnd ? new Date(propCrDraftEnd + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowPropCREndPicker(false);
-                  if (date) setPropCrDraftEnd(date.toISOString().split('T')[0]);
-                }}
-              />
-            )}
-            {showPropCREndPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowPropCREndPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showPropCREndPicker}
+              value={propCrDraftEnd}
+              onConfirm={(date) => {
+                setPropCrDraftEnd(toISODateLocal(date));
+                setShowPropCREndPicker(false);
+              }}
+              onCancel={() => setShowPropCREndPicker(false)}
+              title="End Date"
+            />
 
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity

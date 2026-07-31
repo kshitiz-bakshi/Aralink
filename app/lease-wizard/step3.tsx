@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Switch,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,9 +50,11 @@ export default function LeaseWizardStep3() {
   const onPrimaryColor = isDark ? '#0B0B0C' : '#FFFFFF';
   const handleNext = () => {
     if (!formData.landlordNoticeAddress.trim()) {
+      Alert.alert('Missing Information', "Please enter the landlord's notice address.");
       return;
     }
     if (formData.allowEmailNotices && !formData.landlordEmail?.trim()) {
+      Alert.alert('Missing Information', 'Please enter an email address for notices, or turn off email notices.');
       return;
     }
 

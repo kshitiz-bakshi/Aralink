@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, View, TextInput, Switch, Platform } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, View, TextInput, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -65,28 +65,20 @@ export default function FinalizeLeaseTermsScreen() {
 
   const formatDate = (date: Date): string => fmtDateInput(date);
 
-  const handleStartDateChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowStartDatePicker(false);
-    }
-    if (date) {
-      setStartDate(date);
-      const formattedDate = formatDate(date);
-      setFormData({ ...formData, startDate: formattedDate });
-      if (errors.startDate) setErrors({ ...errors, startDate: '' });
-    }
+  const handleStartDateChange = (date: Date) => {
+    setStartDate(date);
+    const formattedDate = formatDate(date);
+    setFormData({ ...formData, startDate: formattedDate });
+    if (errors.startDate) setErrors({ ...errors, startDate: '' });
+    setShowStartDatePicker(false);
   };
 
-  const handleEndDateChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowEndDatePicker(false);
-    }
-    if (date) {
-      setEndDate(date);
-      const formattedDate = formatDate(date);
-      setFormData({ ...formData, endDate: formattedDate });
-      if (errors.endDate) setErrors({ ...errors, endDate: '' });
-    }
+  const handleEndDateChange = (date: Date) => {
+    setEndDate(date);
+    const formattedDate = formatDate(date);
+    setFormData({ ...formData, endDate: formattedDate });
+    if (errors.endDate) setErrors({ ...errors, endDate: '' });
+    setShowEndDatePicker(false);
   };
 
   const handleGenerate = () => {
@@ -190,15 +182,14 @@ export default function FinalizeLeaseTermsScreen() {
                   </TouchableOpacity>
                 </View>
                 {errors.startDate && <ThemedText style={styles.errorText}>{errors.startDate}</ThemedText>}
-                {showStartDatePicker && (
-                  <DateTimePicker
-                    value={startDate}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={handleStartDateChange}
-                    minimumDate={new Date()}
-                  />
-                )}
+                <AppDatePicker
+                  visible={showStartDatePicker}
+                  value={startDate}
+                  onConfirm={handleStartDateChange}
+                  onCancel={() => setShowStartDatePicker(false)}
+                  minimumDate={new Date()}
+                  title="Lease Start Date"
+                />
               </View>
 
               <View style={[styles.formGroup, styles.formGroupHalf]}>
@@ -224,15 +215,14 @@ export default function FinalizeLeaseTermsScreen() {
                   </TouchableOpacity>
                 </View>
                 {errors.endDate && <ThemedText style={styles.errorText}>{errors.endDate}</ThemedText>}
-                {showEndDatePicker && (
-                  <DateTimePicker
-                    value={endDate}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={handleEndDateChange}
-                    minimumDate={startDate}
-                  />
-                )}
+                <AppDatePicker
+                  visible={showEndDatePicker}
+                  value={endDate}
+                  onConfirm={handleEndDateChange}
+                  onCancel={() => setShowEndDatePicker(false)}
+                  minimumDate={startDate}
+                  title="Lease End Date"
+                />
               </View>
             </View>
 

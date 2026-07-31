@@ -14,10 +14,10 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -25,7 +25,7 @@ import { inviteTenantToProperty, uploadImage, STORAGE_BUCKETS, getApplicationByI
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore, Property, Unit, SubUnit } from '@/store/propertyStore';
 import { useTenantStore } from '@/store/tenantStore';
-import { fmtDateInput } from '@/lib/dateUtils';
+import { fmtDateInput, toValidDate, OPEN_ENDED_END_DATE, isOpenEndedDate } from '@/lib/dateUtils';
 
 export default function AddTenantScreen() {
   const colorScheme = useColorScheme();
@@ -61,6 +61,7 @@ export default function AddTenantScreen() {
     subUnitId: '',
     startDate: '',
     endDate: '',
+    isOpenEnded: false,
     rentAmount: '',
     photo: '',
     idProof1: '',
@@ -173,6 +174,7 @@ export default function AddTenantScreen() {
       subUnitId: '',
       startDate: existingTenant.startDate || '',
       endDate: existingTenant.endDate || '',
+      isOpenEnded: isOpenEndedDate(existingTenant.endDate),
       rentAmount: existingTenant.rentAmount?.toString() || '',
       photo: existingTenant.photo || '',
       idProof1: existingTenant.idProof1 || '',
@@ -363,6 +365,15 @@ export default function AddTenantScreen() {
     }
   };
 
+  const removePhoto = () => {
+    setFormData(prev => ({ ...prev, photo: '' }));
+  };
+
+  const removeIdProof = (slot: 1 | 2) => {
+    const key = slot === 1 ? 'idProof1' : 'idProof2';
+    setFormData(prev => ({ ...prev, [key]: '' }));
+  };
+
   const pickIdProof = async (slot: 1 | 2) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -406,6 +417,54 @@ export default function AddTenantScreen() {
       return;
     }
 
+    if (!formData.startDate) {
+      Alert.alert('Error', 'Please select a lease start date');
+      return;
+    }
+    if (!formData.endDate) {
+      Alert.alert('Error', 'Please select a lease end date');
+      return;
+    }
+    if (toValidDate(formData.endDate) <= toValidDate(formData.startDate)) {
+      Alert.alert('Error', 'Lease end date must be after the start date');
+      return;
+    }
+
+    if (!formData.rentAmount.trim() || parseFloat(formData.rentAmount) <= 0) {
+      Alert.alert('Error', 'Please enter a valid rent amount');
+      return;
+    }
+
+    // Enforce exclusive single-tenant rule: only one primary tenant may be
+    // assigned to a given room/unit/property at a time. Block if another
+    // tenant's lease dates overlap the new one — including future-dated
+    // leases, since a scheduled future tenant still "owns" that slot.
+    // (Multi-tenant rooms are intentionally out of scope for now.)
+    const newStart = toValidDate(formData.startDate);
+    const newEnd = toValidDate(formData.endDate);
+    const conflictingTenant = useTenantStore.getState().tenants.find(t => {
+      if (isEditing && t.id === id) return false;
+      if (formData.subUnitId) {
+        if (String(t.subUnitId) !== String(formData.subUnitId)) return false;
+      } else if (formData.unitId) {
+        if (String(t.unitId) !== String(formData.unitId) || t.subUnitId) return false;
+      } else {
+        if (String(t.propertyId) !== String(formData.propertyId) || t.unitId) return false;
+      }
+      const existingStart = t.startDate ? toValidDate(t.startDate) : new Date(0);
+      const existingEnd = t.endDate ? toValidDate(t.endDate) : new Date(9999, 11, 31);
+      return newStart <= existingEnd && newEnd >= existingStart;
+    });
+
+    if (conflictingTenant) {
+      const existingRange = `${conflictingTenant.startDate || '—'} to ${isOpenEndedDate(conflictingTenant.endDate) ? 'ongoing' : (conflictingTenant.endDate || '—')}`;
+      Alert.alert(
+        'Room Already Assigned',
+        `${conflictingTenant.firstName} ${conflictingTenant.lastName} already has a lease here (${existingRange}) that overlaps these dates. Only one tenant can be assigned to this room/unit at a time.`
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
@@ -439,6 +498,24 @@ export default function AddTenantScreen() {
         unitName = `${selectedUnit?.name} - ${selectedSubUnit.name}`;
       } else if (selectedUnit) {
         unitName = selectedUnit.name;
+      }
+
+      // Keep rent amount in sync with the room/unit/property screens — the
+      // tenant's actual contracted rent is the source of truth for an
+      // occupied slot, so mirror it onto whichever level this tenant is
+      // assigned to. Best-effort only: never let this block tenant creation.
+      try {
+        const parsedRent = parseFloat(formData.rentAmount);
+        const propertyStore = usePropertyStore.getState();
+        if (formData.subUnitId && formData.unitId) {
+          await propertyStore.updateSubUnit(formData.propertyId, formData.unitId, formData.subUnitId, { rentPrice: parsedRent });
+        } else if (formData.unitId) {
+          await propertyStore.updateUnit(formData.propertyId, formData.unitId, { defaultRentPrice: parsedRent });
+        } else {
+          await propertyStore.updateProperty(formData.propertyId, { rentAmount: parsedRent });
+        }
+      } catch (syncError) {
+        console.warn('Could not sync rent to room/unit/property (non-blocking):', syncError);
       }
 
       if (isEditing && id) {
@@ -567,11 +644,6 @@ export default function AddTenantScreen() {
 
         console.log('🔧 inviteTenantToProperty result:', inviteResult);
 
-        if (!inviteResult || inviteResult.error) {
-          // Tenant row was already created — don't block success, just warn about invite
-          console.warn('Invite failed but tenant record was saved:', inviteResult?.error);
-        }
-
         // Force refresh both stores so the new tenant shows up immediately
         // everywhere (property cards, tenant lists, Tenant Detail button)
         await Promise.all([
@@ -580,6 +652,19 @@ export default function AddTenantScreen() {
         ]);
         console.log('🔄 Property + tenant stores force refreshed after tenant addition');
 
+        if (!inviteResult || inviteResult.error) {
+          // The tenant row was already created, but the property assignment
+          // (tenant_property_links) never happened — surface this clearly
+          // instead of a misleading "Success" message, so the user knows to retry.
+          console.warn('Invite failed but tenant record was saved:', inviteResult?.error);
+          Alert.alert(
+            'Tenant Saved, But Not Assigned',
+            `${inviteResult?.error || 'An unknown error occurred.'}\n\nThe tenant was saved, but could not be linked to the property. Please edit the tenant and try again.`,
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+          return;
+        }
+
         // Show success message — note when email couldn't be sent
         const emailFailed = inviteResult?.emailQueued === false && !inviteResult?.notificationQueued;
         const successMessage = emailFailed
@@ -587,7 +672,7 @@ export default function AddTenantScreen() {
           : inviteResult?.notificationQueued
           ? 'Tenant has been assigned to the property. They can now view their property details in the app.'
           : 'Tenant has been assigned to the property and will receive an email confirmation.';
-        
+
         Alert.alert('Success', successMessage, [
           {
             text: 'OK',
@@ -648,15 +733,22 @@ export default function AddTenantScreen() {
         >
           {/* Photo Upload */}
           <View style={styles.photoSection}>
-            <TouchableOpacity onPress={pickImage} style={styles.photoContainer}>
-              {formData.photo ? (
-                <Image source={{ uri: formData.photo }} style={styles.photo} />
-              ) : (
-                <View style={[styles.photoPlaceholder, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}>
-                  <MaterialCommunityIcons name="camera-plus" size={48} color={secondaryTextColor} />
-                </View>
+            <View style={styles.photoContainer}>
+              <TouchableOpacity onPress={pickImage}>
+                {formData.photo ? (
+                  <Image source={{ uri: formData.photo }} style={styles.photo} />
+                ) : (
+                  <View style={[styles.photoPlaceholder, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}>
+                    <MaterialCommunityIcons name="camera-plus" size={48} color={secondaryTextColor} />
+                  </View>
+                )}
+              </TouchableOpacity>
+              {!!formData.photo && (
+                <TouchableOpacity onPress={removePhoto} style={styles.removeBadge} hitSlop={8}>
+                  <MaterialCommunityIcons name="close-circle" size={24} color="#ef4444" />
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
             <ThemedText style={[styles.photoLabel, { color: secondaryTextColor }]}>
               Upload Photo (Optional)
             </ThemedText>
@@ -668,30 +760,44 @@ export default function AddTenantScreen() {
             <View style={styles.row}>
               {/* ID Proof 1 */}
               <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
-                <TouchableOpacity
-                  onPress={() => pickIdProof(1)}
-                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
-                >
-                  {formData.idProof1 ? (
-                    <Image source={{ uri: formData.idProof1 }} style={styles.idProofImage} />
-                  ) : (
-                    <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                <View style={styles.idProofWrapper}>
+                  <TouchableOpacity
+                    onPress={() => pickIdProof(1)}
+                    style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
+                  >
+                    {formData.idProof1 ? (
+                      <Image source={{ uri: formData.idProof1 }} style={styles.idProofImage} />
+                    ) : (
+                      <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                    )}
+                  </TouchableOpacity>
+                  {!!formData.idProof1 && (
+                    <TouchableOpacity onPress={() => removeIdProof(1)} style={styles.removeBadge} hitSlop={8}>
+                      <MaterialCommunityIcons name="close-circle" size={22} color="#ef4444" />
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
+                </View>
                 <ThemedText style={[styles.photoLabel, { color: secondaryTextColor, marginTop: 4 }]}>ID Proof 1</ThemedText>
               </View>
               {/* ID Proof 2 */}
               <View style={[styles.inputGroup, { flex: 1, alignItems: 'center' }]}>
-                <TouchableOpacity
-                  onPress={() => pickIdProof(2)}
-                  style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
-                >
-                  {formData.idProof2 ? (
-                    <Image source={{ uri: formData.idProof2 }} style={styles.idProofImage} />
-                  ) : (
-                    <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                <View style={styles.idProofWrapper}>
+                  <TouchableOpacity
+                    onPress={() => pickIdProof(2)}
+                    style={[styles.idProofContainer, { backgroundColor: isDark ? '#26282C' : '#E5E5E7', borderColor }]}
+                  >
+                    {formData.idProof2 ? (
+                      <Image source={{ uri: formData.idProof2 }} style={styles.idProofImage} />
+                    ) : (
+                      <MaterialCommunityIcons name="card-account-details-outline" size={32} color={secondaryTextColor} />
+                    )}
+                  </TouchableOpacity>
+                  {!!formData.idProof2 && (
+                    <TouchableOpacity onPress={() => removeIdProof(2)} style={styles.removeBadge} hitSlop={8}>
+                      <MaterialCommunityIcons name="close-circle" size={22} color="#ef4444" />
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
+                </View>
                 <ThemedText style={[styles.photoLabel, { color: secondaryTextColor, marginTop: 4 }]}>ID Proof 2</ThemedText>
               </View>
             </View>
@@ -974,7 +1080,7 @@ export default function AddTenantScreen() {
             {/* Start Date and End Date — calendar pickers */}
             <View style={styles.row}>
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>Lease Start</ThemedText>
+                <ThemedText style={[styles.label, { color: textColor }]}>Lease Start *</ThemedText>
                 <TouchableOpacity
                   style={[styles.input, { backgroundColor: inputBgColor, borderColor, justifyContent: 'center' }]}
                   onPress={() => { setShowEndDatePicker(false); setShowStartDatePicker(true); }}
@@ -985,58 +1091,74 @@ export default function AddTenantScreen() {
                 </TouchableOpacity>
               </View>
               <View style={[styles.inputGroup, { flex: 1 }]}>
-                <ThemedText style={[styles.label, { color: textColor }]}>Lease End</ThemedText>
+                <ThemedText style={[styles.label, { color: textColor }]}>Lease End *</ThemedText>
                 <TouchableOpacity
-                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, justifyContent: 'center' }]}
+                  style={[
+                    styles.input,
+                    { backgroundColor: inputBgColor, borderColor, justifyContent: 'center' },
+                    formData.isOpenEnded && { opacity: 0.5 },
+                  ]}
+                  disabled={formData.isOpenEnded}
                   onPress={() => { setShowStartDatePicker(false); setShowEndDatePicker(true); }}
                 >
                   <ThemedText style={{ color: formData.endDate ? textColor : secondaryTextColor }}>
-                    {formData.endDate || 'MM/DD/YYYY'}
+                    {formData.isOpenEnded ? 'No end date' : (formData.endDate || 'MM/DD/YYYY')}
                   </ThemedText>
                 </TouchableOpacity>
               </View>
             </View>
 
-            {showStartDatePicker && (
-              <DateTimePicker
-                value={formData.startDate ? new Date(formData.startDate) : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowStartDatePicker(false);
-                  if (date) setFormData(prev => ({ ...prev, startDate: formatLeaseDate(date) }));
+            {/* Open-ended / month-to-month toggle */}
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setFormData(prev => ({
+                ...prev,
+                isOpenEnded: !prev.isOpenEnded,
+                endDate: !prev.isOpenEnded ? OPEN_ENDED_END_DATE : '',
+              }))}
+            >
+              <View style={[
+                styles.checkbox,
+                {
+                  borderColor: formData.isOpenEnded ? primaryColor : borderColor,
+                  backgroundColor: formData.isOpenEnded ? primaryColor : 'transparent',
+                },
+              ]}>
+                {formData.isOpenEnded && (
+                  <MaterialCommunityIcons name="check" size={14} color={onPrimaryColor} />
+                )}
+              </View>
+              <ThemedText style={[styles.checkboxLabel, { color: textColor }]}>
+                No end date (month-to-month)
+              </ThemedText>
+            </TouchableOpacity>
+
+            <AppDatePicker
+              visible={showStartDatePicker}
+              value={formData.startDate}
+              onConfirm={(date) => {
+                setFormData(prev => ({ ...prev, startDate: formatLeaseDate(date) }));
+                setShowStartDatePicker(false);
+              }}
+              onCancel={() => setShowStartDatePicker(false)}
+              title="Lease Start"
+            />
+            {!formData.isOpenEnded && (
+              <AppDatePicker
+                visible={showEndDatePicker}
+                value={formData.endDate}
+                onConfirm={(date) => {
+                  setFormData(prev => ({ ...prev, endDate: formatLeaseDate(date) }));
+                  setShowEndDatePicker(false);
                 }}
+                onCancel={() => setShowEndDatePicker(false)}
+                title="Lease End"
               />
-            )}
-            {showStartDatePicker && Platform.OS === 'ios' && (
-              <TouchableOpacity
-                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
-                onPress={() => setShowStartDatePicker(false)}>
-                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
-            {showEndDatePicker && (
-              <DateTimePicker
-                value={formData.endDate ? new Date(formData.endDate) : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowEndDatePicker(false);
-                  if (date) setFormData(prev => ({ ...prev, endDate: formatLeaseDate(date) }));
-                }}
-              />
-            )}
-            {showEndDatePicker && Platform.OS === 'ios' && (
-              <TouchableOpacity
-                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
-                onPress={() => setShowEndDatePicker(false)}>
-                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
             )}
 
             {/* Rent Amount */}
             <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: textColor }]}>Rent Amount</ThemedText>
+              <ThemedText style={[styles.label, { color: textColor }]}>Rent Amount *</ThemedText>
               <View style={styles.currencyInput}>
                 <MaterialCommunityIcons name="currency-usd" size={20} color={secondaryTextColor} style={styles.currencyIcon} />
                 <TextInput
@@ -1095,6 +1217,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxLabel: {
+    fontSize: 14,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1125,6 +1265,18 @@ const styles = StyleSheet.create({
   },
   photoContainer: {
     marginBottom: 12,
+    position: 'relative',
+    alignSelf: 'center',
+  },
+  removeBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  idProofWrapper: {
+    position: 'relative',
   },
   photo: {
     width: 112,
