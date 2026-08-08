@@ -35,7 +35,7 @@ export default function SplashRoute() {
           <ThemedText style={styles.logoText}>🏠</ThemedText>
         </View>
         <ThemedText style={[styles.appName, { color: textColor }]}>
-          Aralink
+          Aaralink
         </ThemedText>
         <ThemedText style={[styles.tagline, { color: textColor, opacity: 0.7 }]}>
           Your Rental Home, Managed

@@ -714,7 +714,7 @@ export default function TenantDetailScreen() {
               >
                 <MaterialCommunityIcons name="download" size={20} color={secondaryTextColor} />
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.ledgerActionButton, { backgroundColor: '#10b981' }]}
                 onPress={() => {
                   if (!tenant || !property) return;
@@ -724,14 +724,17 @@ export default function TenantDetailScreen() {
                       type: 'income',
                       category: 'rent',
                       propertyId: tenantData?.propertyId,
+                      unitId: resolvedUnitId || undefined,
+                      subunitId: resolvedSubUnitId || undefined,
                       tenantId: tenant.id,
+                      leaseId: currentLease?.id || undefined,
                     },
                   });
                 }}
               >
                 <MaterialCommunityIcons name="cash-plus" size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.ledgerActionButton, { backgroundColor: isDark ? '#26282C' : '#111315' }]}
                 onPress={() => {
                   if (!tenant) return;
@@ -739,7 +742,10 @@ export default function TenantDetailScreen() {
                     pathname: '/add-transaction',
                     params: {
                       propertyId: tenantData?.propertyId,
+                      unitId: resolvedUnitId || undefined,
+                      subunitId: resolvedSubUnitId || undefined,
                       tenantId: tenant.id,
+                      leaseId: currentLease?.id || undefined,
                     },
                   });
                 }}

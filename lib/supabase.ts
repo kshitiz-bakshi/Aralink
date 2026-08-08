@@ -1924,8 +1924,7 @@ export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 
     // Add optional fields only if they exist
     if (transaction.property_id) dataToInsert.property_id = transaction.property_id;
     if (transaction.unit_id) dataToInsert.unit_id = transaction.unit_id;
-    // Skip subunit_id for now since subunits table might be empty
-    // if (transaction.subunit_id) dataToInsert.subunit_id = transaction.subunit_id;
+    if (transaction.subunit_id) dataToInsert.subunit_id = transaction.subunit_id;
     if (transaction.tenant_id) dataToInsert.tenant_id = transaction.tenant_id;
     if (transaction.lease_id) dataToInsert.lease_id = transaction.lease_id;
     if (transaction.description) dataToInsert.description = transaction.description;
@@ -1944,20 +1943,14 @@ export async function createTransaction(transaction: Omit<DbTransaction, 'id' | 
       return null;
     }
 
-    // If this transaction is for a tenant, update their profile with latest data
-    if (transaction.tenant_id && transaction.property_id) {
-      try {
-        await updateTenantProfileWithTransaction(
-          transaction.tenant_id,
-          transaction.property_id,
-          transaction.unit_id,
-          transaction.subunit_id
-        );
-      } catch (updateError) {
-        console.warn('Warning: Could not update tenant profile:', updateError);
-        // Don't fail the transaction creation if profile update fails
-      }
-    }
+    // NOTE: this used to also call updateTenantProfileWithTransaction(), which
+    // overwrote tenants.rent_amount with a running "total paid" figure (the
+    // wrong semantic — that field holds the tenant's contracted monthly rent,
+    // kept in sync with the room/unit's listed rent elsewhere) and flipped
+    // tenants.status off a separate, redundant lease-status lookup. Payment
+    // stats are already computed live from real `transactions` rows wherever
+    // they're displayed (e.g. the tenant ledger), so that side effect only
+    // risked corrupting data and has been removed.
 
     if (data) {
       const amount = `$${Number(data.amount || 0).toLocaleString()}`;
@@ -2024,38 +2017,94 @@ export async function deleteTransactionFromDb(transactionId: string): Promise<bo
 }
 
 // Find active lease for a property/unit/subunit
-export async function findActiveLease(
+export interface ActiveTenantSlotMatch {
+  tenantId: string;
+  leaseId: string | null;
+}
+
+/**
+ * Resolve the ACTIVE tenant (and their current lease, if any) for an exact
+ * property + optional unit + optional sub-unit.
+ *
+ * Primary source: tenant_property_links, matched exactly (unit_id/sub_unit_id
+ * both null, or both set) — the authoritative occupancy source. Excludes
+ * future-dated tenants: a 'pending_invite' link only counts once its
+ * link_start_date has arrived, covering the gap where activation is
+ * otherwise only flipped when the tenant opens their own dashboard on/after
+ * move-in day.
+ *
+ * Fallback: some tenants only ever get a `tenants` row with property_id/
+ * unit_id set directly (e.g. their tenant_property_links insert failed or
+ * was never wired up for that creation path) and have NO
+ * tenant_property_links row at all — confirmed happening in practice.
+ * Without this fallback such a tenant could never be found here, silently
+ * leaving every Accounting-side income transaction for their unit unlinked.
+ * This fallback can only match on property+unit (tenants has no sub-unit
+ * column), and still respects "active, not future" via start_date.
+ */
+export async function resolveActiveTenantForSlot(
   propertyId: string,
   unitId?: string,
-  subunitId?: string
-): Promise<DbLease | null> {
+  subUnitId?: string
+): Promise<ActiveTenantSlotMatch | null> {
   try {
+    const today = new Date().toISOString().split('T')[0];
+    let tenantId: string | null = null;
+
     let query = supabase
-      .from('leases')
-      .select('*')
+      .from('tenant_property_links')
+      .select('tenant_id, status, link_start_date')
       .eq('property_id', propertyId)
-      .eq('status', 'signed') // Only signed leases are active
-      .gte('expiry_date', new Date().toISOString()); // Not expired
+      .in('status', ['active', 'pending_invite']);
+    query = subUnitId ? query.eq('sub_unit_id', subUnitId) : query.is('sub_unit_id', null);
+    query = unitId ? query.eq('unit_id', unitId) : query.is('unit_id', null);
 
-    if (unitId) {
-      query = query.eq('unit_id', unitId);
-    }
-
-    // Note: subunit matching would need to be in form_data JSONB
-    // For now, we match by property/unit
-    
-    const { data, error } = await query.limit(1).single();
-
-    if (error) {
-      if (error.code !== 'PGRST116') { // Not found is OK
-        console.error('Error finding active lease:', error);
+    const { data: links } = await query;
+    if (links && links.length > 0) {
+      const eligible = links.filter(l =>
+        l.status === 'active' || (l.status === 'pending_invite' && !!l.link_start_date && l.link_start_date <= today)
+      );
+      if (eligible.length > 0) {
+        // If more than one qualifies, the most recently moved-in tenant wins.
+        eligible.sort((a, b) => (b.link_start_date || '').localeCompare(a.link_start_date || ''));
+        tenantId = eligible[0].tenant_id;
       }
-      return null;
     }
 
-    return data;
+    if (!tenantId) {
+      let tenantQuery = supabase
+        .from('tenants')
+        .select('id, status, start_date')
+        .eq('property_id', propertyId)
+        .eq('status', 'active');
+      tenantQuery = unitId ? tenantQuery.eq('unit_id', unitId) : tenantQuery.is('unit_id', null);
+
+      const { data: directTenants } = await tenantQuery;
+      if (directTenants && directTenants.length > 0) {
+        // Strictly exclude future-dated tenants — never fall back to one
+        // just because it's the only candidate. "No active tenant yet" is
+        // the correct answer the day before someone's move-in date.
+        const eligible = directTenants.filter(t => !t.start_date || t.start_date <= today);
+        if (eligible.length > 0) {
+          eligible.sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''));
+          tenantId = eligible[0].id;
+        }
+      }
+    }
+
+    if (!tenantId) return null;
+
+    const { data: leases } = await supabase
+      .from('leases')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .in('status', ['active', 'signed_pending_move_in', 'signed'])
+      .order('effective_date', { ascending: false })
+      .limit(1);
+
+    return { tenantId, leaseId: leases && leases.length > 0 ? leases[0].id : null };
   } catch (error) {
-    console.error('Error finding active lease:', error);
+    console.error('Error resolving active tenant for slot:', error);
     return null;
   }
 }
@@ -2161,6 +2210,28 @@ export async function fetchTenantTransactions(tenantId: string): Promise<DbTrans
     return data || [];
   } catch (error) {
     console.error('Error fetching tenant transactions:', error);
+    return [];
+  }
+}
+
+// Fetch every transaction for a property — its "income history" — regardless
+// of which unit/subunit/tenant it's linked to.
+export async function fetchTransactionsByProperty(propertyId: string): Promise<DbTransaction[]> {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('date', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching property transactions:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching property transactions:', error);
     return [];
   }
 }
@@ -4156,40 +4227,6 @@ export async function getTenantPropertyAssociation(
     };
   } catch (error) {
     console.error('Error getting tenant-property association:', error);
-    return null;
-  }
-}
-
-/**
- * Update tenant profile with latest transaction data for a property
- * Called when a new transaction is added for a tenant
- */
-export async function updateTenantProfileWithTransaction(
-  tenantId: string,
-  propertyId: string,
-  unitId?: string,
-  subunitId?: string
-): Promise<DbTenant | null> {
-  try {
-    // Get the tenant-property association data
-    const association = await getTenantPropertyAssociation(propertyId, unitId, subunitId);
-    
-    if (!association) {
-      return null;
-    }
-
-    // Update tenant profile with the latest data
-    const updatedTenant = await updateTenantInDb(tenantId, {
-      property_id: propertyId,
-      unit_id: unitId,
-      unit_name: association.unitName,
-      status: association.leaseStatus === 'signed' ? 'active' : 'inactive',
-      rent_amount: association.totalRentPaid, // Store total paid so far
-    });
-
-    return updatedTenant;
-  } catch (error) {
-    console.error('Error updating tenant profile with transaction:', error);
     return null;
   }
 }

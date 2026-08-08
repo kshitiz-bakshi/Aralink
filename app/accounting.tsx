@@ -27,6 +27,7 @@ import {
   getTransactionAggregates,
   TransactionAggregates,
 } from '@/lib/supabase';
+import { getFullAddressWithUnit } from '@/lib/addressUtils';
 import { usePropertyStore } from '@/store/propertyStore';
 
 type TransactionType = 'income' | 'expense';
@@ -58,7 +59,7 @@ export default function AccountingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { properties } = usePropertyStore();
+  const { properties, getPropertyById, getUnitById } = usePropertyStore();
 
   const [transactionType, setTransactionType] = useState<TransactionType>('income');
   const [chartPeriod, setChartPeriod] = useState<1 | 3 | 6 | 'cr'>(6);
@@ -283,11 +284,26 @@ export default function AccountingScreen() {
     return colorMap[category] || { bgColor: '#F3F4F6', color: '#6B7280' };
   };
 
+  // Full property/unit/subunit address for a transaction, resolved from its
+  // own property_id/unit_id/subunit_id — not from a linked tenant's fields,
+  // so it's correct even for transactions with no tenant attached.
+  const getTransactionAddress = (transaction: DbTransaction): string | null => {
+    if (!transaction.property_id) return null;
+    const property = getPropertyById(transaction.property_id);
+    if (!property) return null;
+    const unit = transaction.unit_id ? getUnitById(transaction.unit_id) : undefined;
+    const subUnit = transaction.subunit_id
+      ? unit?.subUnits?.find(su => su.id === transaction.subunit_id)
+      : undefined;
+    return getFullAddressWithUnit(property, unit?.name, subUnit?.name);
+  };
+
   const renderTransaction = (transaction: DbTransaction) => {
     const isPending = transaction.status === 'pending';
     const colors = getCategoryColors(transaction.category);
     const icon = getCategoryIcon(transaction.category);
-    
+    const address = getTransactionAddress(transaction);
+
     return (
       <TouchableOpacity
         key={transaction.id}
@@ -322,6 +338,14 @@ export default function AccountingScreen() {
             {transaction.category.charAt(0).toUpperCase() + transaction.category.slice(1)}
             {transaction.service_type && ` • ${transaction.service_type}`}
           </ThemedText>
+          {address && (
+            <ThemedText
+              style={[styles.transactionMeta, { color: secondaryTextColor }]}
+              numberOfLines={1}
+            >
+              {address}
+            </ThemedText>
+          )}
         </View>
         
         <View style={styles.transactionRight}>

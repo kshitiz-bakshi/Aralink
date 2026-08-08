@@ -14,7 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
-import { DbTransaction, fetchTransactionById, getTenantPropertyAssociation } from '@/lib/supabase';
+import { DbTransaction, fetchTransactionById } from '@/lib/supabase';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useTenantStore } from '@/store/tenantStore';
 
@@ -45,7 +45,7 @@ export default function TransactionDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  const { getPropertyById } = usePropertyStore();
+  const { getPropertyById, getUnitById } = usePropertyStore();
   const { getTenantById } = useTenantStore();
 
   useEffect(() => {
@@ -66,13 +66,19 @@ export default function TransactionDetailScreen() {
         return;
       }
 
-      // Ensure properties are loaded before looking up
-      const { loadFromSupabase } = usePropertyStore.getState();
-      await loadFromSupabase(user.id);
+      // Ensure properties AND tenants are loaded before looking up — if this
+      // screen is opened before any other screen has hydrated the tenant
+      // store this session, getTenantById() below would silently return
+      // nothing even though transactionData.tenant_id is set correctly,
+      // making the whole "Tenant Information" card disappear.
+      await Promise.all([
+        usePropertyStore.getState().loadFromSupabase(user.id),
+        useTenantStore.getState().loadFromSupabase(user.id),
+      ]);
 
       // Enrich with property and tenant information
       const enrichedTransaction: TransactionDetail = { ...transactionData };
-      
+
       // Get property information
       const property = getPropertyById(transactionData.property_id!);
       if (property) {
@@ -84,27 +90,27 @@ export default function TransactionDetailScreen() {
         }`;
       }
 
+      // Build unit/room info from the transaction's OWN unit_id/subunit_id —
+      // not from a linked tenant's fields, so it's correct even when there's
+      // no tenant attached (e.g. entered from Accounting for a vacant unit).
+      const unit = transactionData.unit_id ? getUnitById(transactionData.unit_id) : undefined;
+      const subUnit = transactionData.subunit_id
+        ? unit?.subUnits?.find(su => su.id === transactionData.subunit_id)
+        : undefined;
+      const unitParts = [];
+      if (unit?.name) unitParts.push(`Unit ${unit.name}`);
+      if (subUnit?.name) unitParts.push(`Room ${subUnit.name}`);
+      if (unitParts.length > 0) enrichedTransaction.unitInfo = unitParts.join(' / ');
+
       // Get tenant information if tenant_id is present
       if (transactionData.tenant_id) {
         const tenant = getTenantById(transactionData.tenant_id);
         if (tenant) {
           enrichedTransaction.tenantName = `${tenant.firstName} ${tenant.lastName}`;
           enrichedTransaction.tenantEmail = tenant.email;
-          
-          // Build unit info
-          const unitParts = [];
-          if (tenant.unitName) {
-            unitParts.push(`Room ${tenant.unitName}`);
-          }
-          if (property?.propertyType === 'multi_unit' && tenant.unitId) {
-            unitParts.push(`Unit: ${tenant.unitId}`);
-          }
-          if (unitParts.length > 0) {
-            enrichedTransaction.unitInfo = unitParts.join(' / ');
-          }
         }
       }
-      
+
       setTransaction(enrichedTransaction);
     } catch (err) {
       console.error('Error loading transaction detail:', err);
@@ -254,12 +260,26 @@ export default function TransactionDetailScreen() {
                 )}
 
                 {transaction.propertyAddress && (
+                  <>
+                    <View style={styles.infoRow}>
+                      <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>
+                        Address
+                      </ThemedText>
+                      <ThemedText style={[styles.infoValue, { color: textColor, textAlign: 'right', maxWidth: '60%' }]}>
+                        {transaction.propertyAddress}
+                      </ThemedText>
+                    </View>
+                    {transaction.unitInfo && <View style={[styles.divider, { backgroundColor: borderColor }]} />}
+                  </>
+                )}
+
+                {transaction.unitInfo && (
                   <View style={styles.infoRow}>
                     <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>
-                      Address
+                      Unit
                     </ThemedText>
-                    <ThemedText style={[styles.infoValue, { color: textColor, textAlign: 'right', maxWidth: '60%' }]}>
-                      {transaction.propertyAddress}
+                    <ThemedText style={[styles.infoValue, { color: textColor }]}>
+                      {transaction.unitInfo}
                     </ThemedText>
                   </View>
                 )}
@@ -297,20 +317,6 @@ export default function TransactionDetailScreen() {
                     {transaction.tenantEmail}
                   </ThemedText>
                 </View>
-
-                {transaction.unitInfo && (
-                  <>
-                    <View style={[styles.divider, { backgroundColor: borderColor }]} />
-                    <View style={styles.infoRow}>
-                      <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>
-                        Unit
-                      </ThemedText>
-                      <ThemedText style={[styles.infoValue, { color: textColor }]}>
-                        {transaction.unitInfo}
-                      </ThemedText>
-                    </View>
-                  </>
-                )}
               </View>
             </View>
           )}

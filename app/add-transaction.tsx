@@ -23,7 +23,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/hooks/use-auth';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
-import { createTransaction, findActiveLease } from '@/lib/supabase';
+import { createTransaction, resolveActiveTenantForSlot } from '@/lib/supabase';
 import { linkExpenseToRequest } from '@/services/maintenanceService';
 import { fetchVendors } from '@/services/vendorService';
 import type { Vendor } from '@/constants/vendors';
@@ -96,6 +96,7 @@ export default function AddTransactionScreen() {
     unitId?: string;
     subunitId?: string;
     tenantId?: string;
+    leaseId?: string;
     maintenanceRequestId?: string;
     description?: string;
   }>();
@@ -136,7 +137,7 @@ export default function AddTransactionScreen() {
     unitId: params.unitId || '',
     subunitId: params.subunitId || '',
     tenantId: params.tenantId || '',
-    leaseId: '',
+    leaseId: params.leaseId || '',
     category: params.category || 'rent',
     serviceType: '',
     vendor: '',
@@ -194,28 +195,48 @@ export default function AddTransactionScreen() {
     }
   }, [selectedUnit, availableSubunits, formData.subunitId]);
 
-  // Auto-map tenant for Rent transactions
+  // Auto-map the active tenant + lease for this exact property/unit/subunit,
+  // for any income transaction (not just rent — parking/garage/other income
+  // at an occupied slot should link the same way).
+  //
+  // Two distinct flows:
+  // - From the Accounting screen (no tenantId param): re-resolve fully
+  //   whenever the selected property/unit/subunit changes, so switching to a
+  //   different (or vacant) slot doesn't keep a stale tenant/lease link.
+  // - From the Tenant screen (tenantId param given): that tenant is fixed —
+  //   never overwritten — this only fills in a missing leaseId.
+  const cameFromTenantScreen = !!params.tenantId;
   useEffect(() => {
     const autoMapTenant = async () => {
-      if (formData.category === 'rent' && formData.propertyId && !params.tenantId) {
-        const lease = await findActiveLease(
+      if (formData.type !== 'income' || !formData.propertyId) return;
+
+      if (cameFromTenantScreen) {
+        if (formData.leaseId) return;
+        const match = await resolveActiveTenantForSlot(
           formData.propertyId,
           formData.unitId || undefined,
           formData.subunitId || undefined
         );
-        
-        if (lease && lease.tenant_id) {
-          setFormData(prev => ({
-            ...prev,
-            tenantId: lease.tenant_id || '',
-            leaseId: lease.id,
-          }));
+        if (match?.leaseId) {
+          setFormData(prev => ({ ...prev, leaseId: match.leaseId! }));
         }
+        return;
       }
+
+      const match = await resolveActiveTenantForSlot(
+        formData.propertyId,
+        formData.unitId || undefined,
+        formData.subunitId || undefined
+      );
+      setFormData(prev => ({
+        ...prev,
+        tenantId: match?.tenantId || '',
+        leaseId: match?.leaseId || '',
+      }));
     };
 
     autoMapTenant();
-  }, [formData.category, formData.propertyId, formData.unitId, formData.subunitId]);
+  }, [formData.type, formData.propertyId, formData.unitId, formData.subunitId, cameFromTenantScreen]);
 
   const handleSubmit = async () => {
     if (!authUser) {
@@ -229,8 +250,32 @@ export default function AddTransactionScreen() {
     }
 
     setIsSubmitting(true);
-    
+
     try {
+      // Resolve the tenant/lease fresh, right here, instead of trusting
+      // formData.tenantId/leaseId — those are set by a background effect
+      // (see the auto-map useEffect above) that can still be in flight if
+      // the user fills the form and taps Save quickly, which would silently
+      // save the transaction with no tenant/lease link at all.
+      let tenantId = formData.tenantId;
+      let leaseId = formData.leaseId;
+      if (formData.type === 'income' && formData.propertyId && !cameFromTenantScreen) {
+        const match = await resolveActiveTenantForSlot(
+          formData.propertyId,
+          formData.unitId || undefined,
+          formData.subunitId || undefined
+        );
+        tenantId = match?.tenantId || '';
+        leaseId = match?.leaseId || '';
+      } else if (cameFromTenantScreen && formData.tenantId && !leaseId) {
+        const match = await resolveActiveTenantForSlot(
+          formData.propertyId,
+          formData.unitId || undefined,
+          formData.subunitId || undefined
+        );
+        leaseId = match?.leaseId || '';
+      }
+
       const result = await createTransaction({
         user_id: authUser.id,
         type: formData.type,
@@ -240,8 +285,8 @@ export default function AddTransactionScreen() {
         property_id: formData.propertyId || undefined,
         unit_id: formData.unitId || undefined,
         subunit_id: formData.subunitId || undefined,
-        tenant_id: formData.tenantId || undefined,
-        lease_id: formData.leaseId || undefined,
+        tenant_id: tenantId || undefined,
+        lease_id: leaseId || undefined,
         description: formData.description || undefined,
         service_type: formData.serviceType || undefined,
         vendor: formData.vendor || undefined,

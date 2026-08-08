@@ -24,7 +24,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { checkEntityHasTenant, createLease, DbLease, deleteImage, fetchLeasesByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { checkEntityHasTenant, createLease, DbLease, DbTransaction, deleteImage, fetchLeasesByProperty, fetchTransactionsByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { getFullAddressWithUnit } from '@/lib/addressUtils';
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
@@ -60,6 +61,7 @@ export default function PropertyDetailScreen() {
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [selectedRoomUnitId, setSelectedRoomUnitId] = useState<string | undefined>(undefined);
   const [propertyLeases, setPropertyLeases] = useState<DbLease[]>([]);
+  const [propertyTransactions, setPropertyTransactions] = useState<DbTransaction[]>([]);
   const [isUpdatingPhotos, setIsUpdatingPhotos] = useState(false);
   const [isUploadingLease, setIsUploadingLease] = useState(false);
 
@@ -115,6 +117,12 @@ export default function PropertyDetailScreen() {
       // Load leases for this property so the room modal can show "View Lease"
       const leases = await fetchLeasesByProperty(id);
       setPropertyLeases(leases);
+
+      // Load this property's income/expense history (Accounting <-> Tenant
+      // <-> Property all read the same `transactions` rows, so whatever was
+      // logged from either screen shows up here too).
+      const txns = await fetchTransactionsByProperty(id);
+      setPropertyTransactions(txns);
     } catch (error) {
       console.error('Error loading property:', error);
     } finally {
@@ -1154,7 +1162,60 @@ export default function PropertyDetailScreen() {
               <ThemedText style={[styles.leaseViewButtonText, { color: primaryColor }]}>View Leases</ThemedText>
             </TouchableOpacity>
           </View>
-          
+
+        </View>
+
+        {/* Income History — same `transactions` rows as the Accounting
+            income list and each tenant's ledger; whatever's logged from
+            either screen shows up here too. */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+              Income History
+            </ThemedText>
+          </View>
+
+          {propertyTransactions.length === 0 ? (
+            <View style={[styles.leaseCard, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={{ color: secondaryTextColor }}>
+                No income recorded for this property yet.
+              </ThemedText>
+            </View>
+          ) : (
+            <>
+              {propertyTransactions.slice(0, 5).map((txn) => {
+                const unit = txn.unit_id ? property.units.find(u => u.id === txn.unit_id) : undefined;
+                const subUnit = txn.subunit_id ? unit?.subUnits?.find(su => su.id === txn.subunit_id) : undefined;
+                const location = getFullAddressWithUnit(property, unit?.name, subUnit?.name);
+                return (
+                  <TouchableOpacity
+                    key={txn.id}
+                    style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                    onPress={() => router.push(`/transaction-detail?id=${txn.id}` as any)}
+                  >
+                    <View style={styles.roomInfo}>
+                      <ThemedText style={[styles.roomName, { color: textColor }]} numberOfLines={1}>
+                        {txn.description || `${txn.category.charAt(0).toUpperCase()}${txn.category.slice(1)} Payment`}
+                      </ThemedText>
+                      <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]} numberOfLines={1}>
+                        {location} • {fmtDate(txn.date)}
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={{ color: txn.type === 'income' ? '#16A34A' : '#DC2626', fontWeight: '700' }}>
+                      {txn.type === 'income' ? '+' : '-'}${txn.amount.toLocaleString()}
+                    </ThemedText>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={[styles.leaseViewButton, { borderColor: primaryColor, marginTop: 4 }]}
+                onPress={() => router.push('/accounting' as any)}
+              >
+                <MaterialCommunityIcons name="cash-multiple" size={18} color={primaryColor} />
+                <ThemedText style={[styles.leaseViewButtonText, { color: primaryColor }]}>View All Income</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
       </ScrollView>

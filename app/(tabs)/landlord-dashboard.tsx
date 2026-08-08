@@ -36,10 +36,33 @@ import { getActivityIconInfo } from '@/utils/activityIcon';
 interface RentCollection {
   collected: number;
   overdue: number;   // unpaid rent (no longer splits into pending/not-paid)
-  advance: number;   // collected > total: cash paid in advance
   total: number;
   month: string;
   year: number;
+}
+
+// A lease row, as needed to determine the applicable rent for a given month.
+// The lease's own rent (form_data.baseRent) always overrides the property/unit's
+// listed rent — it's the final amount actually agreed with the tenant.
+interface ActiveLeaseRentRow {
+  effective_date: string | null;
+  expiry_date: string | null;
+  form_data: { baseRent?: number } | null;
+}
+
+// Sum the applicable lease rent for every lease that was active — tenant
+// moved in, not draft/terminated/rejected, and within its effective/expiry
+// dates — during the given month. Callers only pass leases already filtered
+// to status === 'active' with a tenant assigned (see the fetch below), so
+// this only needs to check the date bounds and a valid rent amount.
+function sumActiveLeaseRentForMonth(leases: ActiveLeaseRentRow[], monthStart: string, monthEnd: string): number {
+  return leases.reduce((sum, lease) => {
+    const rent = lease.form_data?.baseRent;
+    if (!rent || rent <= 0) return sum;
+    if (!lease.effective_date || lease.effective_date > monthEnd) return sum; // hasn't started (moved in) yet this month
+    if (lease.expiry_date && lease.expiry_date < monthStart) return sum; // already expired before this month
+    return sum + rent;
+  }, 0);
 }
 
 interface DashboardTile {
@@ -82,7 +105,6 @@ export default function LandlordDashboardScreen() {
   const [rentCollection, setRentCollection] = useState<RentCollection>({
     collected: 0,
     overdue: 0,
-    advance: 0,
     total: 0,
     month: new Date().toLocaleDateString('en-US', { month: 'long' }),
     year: new Date().getFullYear(),
@@ -90,7 +112,7 @@ export default function LandlordDashboardScreen() {
   const [rentPeriod, setRentPeriod] = useState<1 | 3 | 6 | 'cr'>(1);
   const [rawRentTxns, setRawRentTxns] = useState<{ type: string; category: string; amount: number; date: string; status: string }[]>([]);
   const [rentMonths, setRentMonths] = useState<{ label: string; start: string; end: string }[]>([]);
-  const [expectedMonthlyRent, setExpectedMonthlyRent] = useState(0);
+  const [activeLeaseRents, setActiveLeaseRents] = useState<ActiveLeaseRentRow[]>([]);
 
   // Chart carousel
   const chartScrollRef = useRef<ScrollView>(null);
@@ -147,36 +169,50 @@ export default function LandlordDashboardScreen() {
     return () => subscription.remove();
   }, [user?.id]);
 
-  // Recalculate rent collection client-side when the period toggle changes
+  // Recalculate rent collection client-side when the period toggle changes.
+  // "Total" is reconstructed per-month (not a flat current-rate × months
+  // multiplication) so a lease that started or ended partway through a
+  // multi-month period only contributes for the months it was actually active.
   useEffect(() => {
     if (rentMonths.length < 12) return;
 
     let periodTxns: typeof rawRentTxns;
-    let monthCount: number;
+    let periodMonths: { start: string; end: string }[];
     let firstLabel: string;
 
     if (rentPeriod === 'cr') {
       if (!rentCustomRange) return;
       periodTxns = rawRentTxns.filter(t => t.date >= rentCustomRange.start && t.date <= rentCustomRange.end);
-      const s = new Date(rentCustomRange.start + 'T00:00:00');
-      const e = new Date(rentCustomRange.end + 'T00:00:00');
-      monthCount = Math.max(1, (e.getFullYear() - s.getFullYear()) * 12 + e.getMonth() - s.getMonth() + 1);
-      firstLabel = s.toLocaleDateString('en-US', { month: 'long' });
+      // Break the custom range into per-month buckets, clamped to the range —
+      // mirrors the income/expense chart's custom-range month-splitting below.
+      periodMonths = [];
+      const d = new Date(rentCustomRange.start + 'T00:00:00');
+      d.setDate(1);
+      const endD = new Date(rentCustomRange.end + 'T00:00:00');
+      endD.setDate(1);
+      while (d <= endD) {
+        const monthStart = toISODateLocal(new Date(d.getFullYear(), d.getMonth(), 1));
+        const monthEnd = toISODateLocal(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+        periodMonths.push({
+          start: monthStart < rentCustomRange.start ? rentCustomRange.start : monthStart,
+          end: monthEnd > rentCustomRange.end ? rentCustomRange.end : monthEnd,
+        });
+        d.setMonth(d.getMonth() + 1);
+      }
+      firstLabel = new Date(rentCustomRange.start + 'T00:00:00').toLocaleDateString('en-US', { month: 'long' });
     } else {
-      const periodMonths = rentMonths.slice(12 - rentPeriod);
-      periodTxns = rawRentTxns.filter(t => t.date >= periodMonths[0].start && t.date <= periodMonths[periodMonths.length - 1].end);
-      monthCount = rentPeriod;
-      firstLabel = periodMonths[0].label;
+      const selectedMonths = rentMonths.slice(12 - rentPeriod);
+      periodMonths = selectedMonths;
+      periodTxns = rawRentTxns.filter(t => t.date >= selectedMonths[0].start && t.date <= selectedMonths[selectedMonths.length - 1].end);
+      firstLabel = selectedMonths[0].label;
     }
 
     const rentTxns = periodTxns.filter(t => t.type === 'income' && t.category === 'rent');
     const collected = rentTxns.filter(t => t.status === 'paid').reduce((s, t) => s + (t.amount || 0), 0);
-    const overdueFromTxns = rentTxns.filter(t => t.status === 'overdue').reduce((s, t) => s + (t.amount || 0), 0);
-    const total = expectedMonthlyRent > 0 ? expectedMonthlyRent * monthCount : collected + overdueFromTxns;
-    const overdue = expectedMonthlyRent > 0 ? Math.max(overdueFromTxns, Math.max(0, total - collected)) : overdueFromTxns;
-    const advance = expectedMonthlyRent > 0 ? Math.max(0, collected - total) : 0;
-    setRentCollection({ collected, overdue, advance, total, month: firstLabel, year: new Date().getFullYear() });
-  }, [rentPeriod, rentCustomRange, rawRentTxns, rentMonths, expectedMonthlyRent]);
+    const total = periodMonths.reduce((sum, m) => sum + sumActiveLeaseRentForMonth(activeLeaseRents, m.start, m.end), 0);
+    const overdue = Math.max(0, total - collected);
+    setRentCollection({ collected, overdue, total, month: firstLabel, year: new Date().getFullYear() });
+  }, [rentPeriod, rentCustomRange, rawRentTxns, rentMonths, activeLeaseRents]);
 
   // Recalculate income vs expense client-side when period changes
   useEffect(() => {
@@ -202,6 +238,12 @@ export default function LandlordDashboardScreen() {
       }
     } else {
       const d = new Date();
+      // Reset to day 1 BEFORE doing month arithmetic — setMonth on a date
+      // that's still on day 29/30/31 silently rolls into the next month
+      // whenever it lands on a shorter month (e.g. July 31 minus a few
+      // months walks through September/April/June, none of which have 31
+      // days), shifting every subsequent month in the loop forward by one.
+      d.setDate(1);
       d.setMonth(d.getMonth() - (incomeExpensePeriod - 1));
       for (let i = 0; i < incomeExpensePeriod; i++) {
         const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
@@ -241,6 +283,9 @@ export default function LandlordDashboardScreen() {
       // Build last-12-months labels (supports all period options: 1M/3M/6M/12M)
       const months: { label: string; start: string; end: string }[] = [];
       const dMonth = new Date();
+      // Reset to day 1 BEFORE doing month arithmetic — see the identical fix
+      // (and explanation) in the income/expense month-builder below.
+      dMonth.setDate(1);
       dMonth.setMonth(dMonth.getMonth() - 11);
 
       for (let i = 0; i < 12; i++) {
@@ -261,7 +306,7 @@ export default function LandlordDashboardScreen() {
         { count: leaseCount },
         { count: maintenanceCount },
         { count: applicantCount },
-        { data: rentData },
+        { data: leaseData },
         { data: txns }
       ] = await Promise.all([
         supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
@@ -269,7 +314,13 @@ export default function LandlordDashboardScreen() {
         supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).not('status', 'in', '(draft,terminated)'),
         supabase.from('maintenance_requests').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['pending', 'in_progress']),
         supabase.from('applicants').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['invited', 'applied']),
-        supabase.from('tenant_property_links').select('rent_amount').eq('landlord_id', user.id).eq('status', 'active'),
+        // Rent total is sourced from the LEASE's own rent (form_data.baseRent),
+        // never the property/unit's listed rent — the lease is the final
+        // agreed amount. Only leases with status 'active' count: that status
+        // specifically means the tenant has moved in (as opposed to
+        // 'signed_pending_move_in'), so this also satisfies the "tenant has
+        // moved in" requirement without a separate date check.
+        supabase.from('leases').select('effective_date, expiry_date, form_data').eq('user_id', user.id).eq('status', 'active').not('tenant_id', 'is', null),
         supabase.from('transactions').select('type, category, amount, date, status').eq('user_id', user.id).gte('date', months[0].start).lte('date', months[11].end)
       ]);
 
@@ -280,8 +331,8 @@ export default function LandlordDashboardScreen() {
       }
 
       // Store raw data so the period toggle can recalculate client-side
-      const monthlyRent = rentData?.reduce((sum, link) => sum + (link.rent_amount || 0), 0) || 0;
-      setExpectedMonthlyRent(monthlyRent);
+      const leaseRents: ActiveLeaseRentRow[] = leaseData || [];
+      setActiveLeaseRents(leaseRents);
       setRentMonths(months);
       setRawRentTxns(txns || []);
 
@@ -291,13 +342,8 @@ export default function LandlordDashboardScreen() {
       const collected = currentRentTxns
         .filter(t => t.status === 'paid')
         .reduce((sum, t) => sum + (t.amount || 0), 0);
-      const overdueFromTxns = currentRentTxns
-        .filter(t => t.status === 'overdue')
-        .reduce((sum, t) => sum + (t.amount || 0), 0);
-      const overdue = monthlyRent > 0
-        ? Math.max(overdueFromTxns, Math.max(0, monthlyRent - collected))
-        : overdueFromTxns;
-      const advance = monthlyRent > 0 ? Math.max(0, collected - monthlyRent) : 0;
+      const monthlyRent = sumActiveLeaseRentForMonth(leaseRents, months[11].start, months[11].end);
+      const overdue = Math.max(0, monthlyRent - collected);
 
       setStats({
         propertyCount: propertyCount || 0,
@@ -311,8 +357,7 @@ export default function LandlordDashboardScreen() {
       setRentCollection({
         collected,
         overdue,
-        advance,
-        total: monthlyRent > 0 ? monthlyRent : collected,
+        total: monthlyRent,
         month: new Date().toLocaleDateString('en-US', { month: 'long' }),
         year: new Date().getFullYear(),
       });
@@ -558,7 +603,6 @@ export default function LandlordDashboardScreen() {
               <RentChart
                 collected={rentCollection.collected}
                 overdue={rentCollection.overdue}
-                advance={rentCollection.advance}
                 total={rentCollection.total}
               />
 
@@ -571,12 +615,6 @@ export default function LandlordDashboardScreen() {
                   <View style={[styles.legendDot, { backgroundColor: '#FF3B30' }]} />
                   <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>Overdue</ThemedText>
                 </View>
-                {rentCollection.advance > 0 && (
-                  <View style={styles.legendItem}>
-                    <View style={[styles.legendDot, { backgroundColor: '#AF52DE' }]} />
-                    <ThemedText style={[styles.legendText, { color: textPrimaryColor }]}>In Advance</ThemedText>
-                  </View>
-                )}
               </View>
             </View>
 
