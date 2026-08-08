@@ -18,6 +18,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -104,9 +105,11 @@ export default function LeaseWizardStep5() {
 
   const handleNext = () => {
     if (!formData.baseRent || formData.baseRent <= 0) {
+      Alert.alert('Missing Information', 'Please enter a valid base rent amount.');
       return;
     }
     if (!formData.rentPayableTo.trim()) {
+      Alert.alert('Missing Information', 'Please enter who the rent is payable to.');
       return;
     }
 

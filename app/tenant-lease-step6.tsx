@@ -212,7 +212,7 @@ export default function TenantLeaseStep6Screen() {
           <View style={styles.sectionHeader}>
             <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Personal Information</ThemedText>
             <TouchableOpacity onPress={() => handleEdit(1)}>
-              <ThemedText style={[styles.editLink, { color: primaryColor }]}>Edit</ThemedText>
+              <MaterialCommunityIcons name="pencil-outline" size={20} color={primaryColor} />
             </TouchableOpacity>
           </View>
           <View style={styles.sectionContent}>
@@ -248,7 +248,7 @@ export default function TenantLeaseStep6Screen() {
           <View style={styles.sectionHeader}>
             <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Residence History</ThemedText>
             <TouchableOpacity onPress={() => handleEdit(2)}>
-              <ThemedText style={[styles.editLink, { color: primaryColor }]}>Edit</ThemedText>
+              <MaterialCommunityIcons name="pencil-outline" size={20} color={primaryColor} />
             </TouchableOpacity>
           </View>
           <View style={styles.sectionContent}>
@@ -266,7 +266,7 @@ export default function TenantLeaseStep6Screen() {
           <View style={styles.sectionHeader}>
             <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Employment & Income</ThemedText>
             <TouchableOpacity onPress={() => handleEdit(3)}>
-              <ThemedText style={[styles.editLink, { color: primaryColor }]}>Edit</ThemedText>
+              <MaterialCommunityIcons name="pencil-outline" size={20} color={primaryColor} />
             </TouchableOpacity>
           </View>
           <View style={styles.sectionContent}>
@@ -290,7 +290,7 @@ export default function TenantLeaseStep6Screen() {
           <View style={styles.sectionHeader}>
             <ThemedText style={[styles.sectionTitle, { color: textPrimaryColor }]}>Uploaded Documents</ThemedText>
             <TouchableOpacity onPress={() => handleEdit(5)}>
-              <ThemedText style={[styles.editLink, { color: primaryColor }]}>Edit</ThemedText>
+              <MaterialCommunityIcons name="pencil-outline" size={20} color={primaryColor} />
             </TouchableOpacity>
           </View>
           <View style={styles.sectionContent}>
@@ -339,7 +339,7 @@ export default function TenantLeaseStep6Screen() {
                         onPress={() => handleEditCoApplicant(index)}
                         style={styles.iconButton}
                       >
-                        <MaterialCommunityIcons name="pencil" size={20} color={primaryColor} />
+                        <MaterialCommunityIcons name="pencil-outline" size={20} color={primaryColor} />
                       </TouchableOpacity>
                       <TouchableOpacity 
                         onPress={() => handleRemoveCoApplicant(index)}
@@ -512,10 +512,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-  },
-  editLink: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   sectionContent: {
     gap: 12,

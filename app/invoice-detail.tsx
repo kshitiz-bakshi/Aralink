@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Platform, StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { StyleSheet, ScrollView, TextInput, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
@@ -94,22 +94,16 @@ export default function InvoiceDetailScreen() {
                 {formData.date || 'MM/DD/YYYY'}
               </ThemedText>
             </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker
-                value={formData.date ? new Date(formData.date) : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowDatePicker(false);
-                  if (date) setFormData({ ...formData, date: formatDate(date) });
-                }}
-              />
-            )}
-            {showDatePicker && Platform.OS === 'ios' && (
-              <TouchableOpacity style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }} onPress={() => setShowDatePicker(false)}>
-                <ThemedText style={{ fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showDatePicker}
+              value={formData.date}
+              onConfirm={(date) => {
+                setFormData({ ...formData, date: formatDate(date) });
+                setShowDatePicker(false);
+              }}
+              onCancel={() => setShowDatePicker(false)}
+              title="Invoice Date"
+            />
           </ThemedView>
 
           <TouchableOpacity

@@ -49,3 +49,33 @@ export function toISODateLocal(d: Date): string {
 export function fmtDateInput(d: Date): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
 }
+
+/** Sentinel "no end date" value for open-ended / month-to-month tenancies,
+ *  in the same MM/DD/YYYY format used for lease dates in the tenant screens. */
+export const OPEN_ENDED_END_DATE = '12/31/9999';
+
+/** True if a stored end date represents an open-ended (no fixed end) tenancy,
+ *  regardless of whether it's stored as MM/DD/YYYY or ISO (year 9999 either way). */
+export function isOpenEndedDate(value?: string | null): boolean {
+  if (!value) return false;
+  return toValidDate(value).getFullYear() >= 9999;
+}
+
+/** Coerce any date-ish input (Date, ISO string, MM/DD/YYYY string, null, undefined)
+ *  into a valid Date. Falls back to "now" instead of ever producing an Invalid
+ *  Date / epoch (1969-1970) — the classic date-picker default bug. Hermes (the
+ *  Android JS engine) only reliably parses ISO-8601, so MM/DD/YYYY is parsed
+ *  manually rather than handed to `new Date(string)`. */
+export function toValidDate(value?: Date | string | null): Date {
+  if (!value) return new Date();
+  if (value instanceof Date) return isNaN(value.getTime()) ? new Date() : value;
+
+  const mdy = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) {
+    const d = new Date(Number(mdy[3]), Number(mdy[1]) - 1, Number(mdy[2]));
+    return isNaN(d.getTime()) ? new Date() : d;
+  }
+
+  const d = new Date(value.includes('T') ? value : value + 'T00:00:00');
+  return isNaN(d.getTime()) ? new Date() : d;
+}

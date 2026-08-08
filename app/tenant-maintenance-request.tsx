@@ -4,7 +4,6 @@ import {
   Alert,
   FlatList,
   Modal,
-  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -15,8 +14,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+import AppDatePicker from '@/components/AppDatePicker';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useMaintenanceStore } from '@/store/maintenanceStore';
@@ -429,18 +429,18 @@ export default function TenantMaintenanceRequestScreen() {
               <MaterialCommunityIcons name="calendar-clock" size={20} color={textColor} />
               <Text style={[styles.availabilityText, { color: textColor }]}>{formattedAvailability}</Text>
             </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker
-                value={availabilityDate}
-                mode="datetime"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                minimumDate={new Date()}
-                onChange={(_, date) => {
-                  if (Platform.OS === 'android') setShowDatePicker(false);
-                  if (date) setAvailabilityDate(date);
-                }}
-              />
-            )}
+            <AppDatePicker
+              visible={showDatePicker}
+              value={availabilityDate}
+              mode="datetime"
+              minimumDate={new Date()}
+              onConfirm={(date) => {
+                setAvailabilityDate(date);
+                setShowDatePicker(false);
+              }}
+              onCancel={() => setShowDatePicker(false)}
+              title="Availability"
+            />
           </FormInput>
 
           <FormInput label="Add Photos / Video" description="Optional, up to 1 MB each.">

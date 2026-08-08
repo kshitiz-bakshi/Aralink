@@ -17,17 +17,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
-import { fmtDate } from '@/lib/dateUtils';
+import { fmtDate, toISODateLocal } from '@/lib/dateUtils';
 
 const TENANCY_TYPES = [
   { value: 'month_to_month', label: 'Month-to-Month', description: 'No fixed end date' },
@@ -71,25 +72,23 @@ export default function LeaseWizardStep4() {
     return fmtDate(dateString, 'Select date');
   };
 
-  const handleStartDateChange = (event: any, selectedDate?: Date) => {
-    setShowStartDatePicker(Platform.OS === 'ios');
-    if (selectedDate) {
-      updateFormData('tenancyStartDate', selectedDate.toISOString().split('T')[0]);
-    }
+  const handleStartDateChange = (selectedDate: Date) => {
+    updateFormData('tenancyStartDate', toISODateLocal(selectedDate));
+    setShowStartDatePicker(false);
   };
 
-  const handleEndDateChange = (event: any, selectedDate?: Date) => {
-    setShowEndDatePicker(Platform.OS === 'ios');
-    if (selectedDate) {
-      updateFormData('tenancyEndDate', selectedDate.toISOString().split('T')[0]);
-    }
+  const handleEndDateChange = (selectedDate: Date) => {
+    updateFormData('tenancyEndDate', toISODateLocal(selectedDate));
+    setShowEndDatePicker(false);
   };
 
   const handleNext = () => {
     if (!formData.tenancyStartDate) {
+      Alert.alert('Missing Information', 'Please select a tenancy start date.');
       return;
     }
     if (formData.tenancyType === 'fixed' && !formData.tenancyEndDate) {
+      Alert.alert('Missing Information', 'Please select a tenancy end date for a fixed-term tenancy.');
       return;
     }
 
@@ -259,25 +258,23 @@ export default function LeaseWizardStep4() {
       </KeyboardAvoidingView>
 
       {/* Date Pickers */}
-      {showStartDatePicker && (
-        <DateTimePicker
-          value={startDate}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={handleStartDateChange}
-          minimumDate={new Date()}
-        />
-      )}
+      <AppDatePicker
+        visible={showStartDatePicker}
+        value={startDate}
+        onConfirm={handleStartDateChange}
+        onCancel={() => setShowStartDatePicker(false)}
+        minimumDate={new Date()}
+        title="Tenancy Start Date"
+      />
 
-      {showEndDatePicker && (
-        <DateTimePicker
-          value={endDate}
-          mode="date"
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={handleEndDateChange}
-          minimumDate={startDate}
-        />
-      )}
+      <AppDatePicker
+        visible={showEndDatePicker}
+        value={endDate}
+        onConfirm={handleEndDateChange}
+        onCancel={() => setShowEndDatePicker(false)}
+        minimumDate={startDate}
+        title="Tenancy End Date"
+      />
 
       {/* Footer */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 16, borderTopColor: borderColor }]}>

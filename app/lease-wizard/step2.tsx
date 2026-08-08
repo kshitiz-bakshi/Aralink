@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Switch,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +27,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOntarioLeaseStore } from '@/store/ontarioLeaseStore';
+import { usePropertyStore } from '@/store/propertyStore';
 import PropertyAddressSelector, { SelectedPropertyData } from '@/components/PropertyAddressSelector';
 
 export default function LeaseWizardStep2() {
@@ -37,13 +39,105 @@ export default function LeaseWizardStep2() {
     formData,
     updateFormData,
     updateUnitAddress,
+    prefillFromProperty,
     nextStep,
     prevStep,
     propertyContext,
     setPropertyContext,
   } = useOntarioLeaseStore();
+  const { properties, getPropertyById } = usePropertyStore();
 
   const [usePropertySelector, setUsePropertySelector] = useState(!formData.unitAddress.city);
+
+  // Fill the manual-entry fields from the wizard's property context.
+  // Returns true when the address was filled.
+  const applyContextPrefill = (): boolean => {
+    if (!propertyContext?.propertyId) return false;
+    const property = getPropertyById(propertyContext.propertyId);
+    if (!property) return false;
+
+    // Unit field format: "SubUnit - Unit" (room first, then unit)
+    let unitInfo = '';
+    if (propertyContext.unitId) {
+      const unit = property.units?.find(u => u.id === propertyContext.unitId);
+      if (unit) {
+        const room = propertyContext.subUnitId
+          ? unit.subUnits?.find(s => s.id === propertyContext.subUnitId)
+          : undefined;
+        unitInfo = [room?.name, unit.name].filter(Boolean).join(' - ');
+      }
+    } else if (propertyContext.subUnitId) {
+      const room = property.units
+        ?.flatMap(u => u.subUnits || [])
+        .find(s => s.id === propertyContext.subUnitId);
+      unitInfo = room?.name || '';
+    }
+
+    const addressParts = property.address1?.split(' ') || [];
+    prefillFromProperty({
+      unit: unitInfo,
+      streetNumber: addressParts[0] || '',
+      streetName: addressParts.slice(1).join(' ') || '',
+      city: property.city || '',
+      province: property.state || 'ON',
+      postalCode: property.zipCode || '',
+    });
+    return true;
+  };
+
+  // Resolve "SubUnit - Unit" text from the property context (empty if none)
+  const resolveContextUnitInfo = (): string => {
+    if (!propertyContext?.propertyId) return '';
+    const property = getPropertyById(propertyContext.propertyId);
+    if (!property) return '';
+    if (propertyContext.unitId) {
+      const unit = property.units?.find(u => u.id === propertyContext.unitId);
+      if (!unit) return '';
+      const room = propertyContext.subUnitId
+        ? unit.subUnits?.find(s => s.id === propertyContext.subUnitId)
+        : undefined;
+      return [room?.name, unit.name].filter(Boolean).join(' - ');
+    }
+    if (propertyContext.subUnitId) {
+      const room = property.units
+        ?.flatMap(u => u.subUnits || [])
+        .find(s => s.id === propertyContext.subUnitId);
+      return room?.name || '';
+    }
+    return '';
+  };
+
+  // Safety net: fill the address when it's still empty. Some flows
+  // (e.g. applicant approval) navigate straight to step1 and bypass the
+  // index-screen prefill entirely. Also repair the unit field when the
+  // address was filled earlier without it.
+  useEffect(() => {
+    if (!propertyContext?.propertyId) return;
+    // properties may still be loading; the effect re-runs when they arrive
+    if (!formData.unitAddress.city) {
+      if (applyContextPrefill()) {
+        setUsePropertySelector(false);
+      }
+      return;
+    }
+    // Address exists but unit is missing — fill just the unit field
+    if (!formData.unitAddress.unit) {
+      const unitInfo = resolveContextUnitInfo();
+      console.log('🏠 step2 unit repair — context:', propertyContext, '→ unitInfo:', unitInfo);
+      if (unitInfo) {
+        updateUnitAddress('unit', unitInfo);
+      }
+    }
+  }, [propertyContext?.propertyId, propertyContext?.unitId, propertyContext?.subUnitId, properties.length]);
+
+  // Toggle between selector and manual entry. When switching to manual with
+  // an empty address, fill it from the property context first.
+  const handleToggleMode = () => {
+    if (usePropertySelector && !formData.unitAddress.city) {
+      applyContextPrefill();
+    }
+    setUsePropertySelector(!usePropertySelector);
+  };
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -67,8 +161,11 @@ export default function LeaseWizardStep2() {
     const streetNumber = addressParts[0] || '';
     const streetName = addressParts.slice(1).join(' ') || '';
 
-    // Update unit address fields
-    updateUnitAddress('unit', data.unit?.unitNumber || data.property.address2 || '');
+    // Update unit address fields — "SubUnit - Unit" format when both selected
+    const selectedUnitInfo = [data.subUnit?.name, data.unit?.name]
+      .filter(Boolean)
+      .join(' - ');
+    updateUnitAddress('unit', selectedUnitInfo || data.property.address2 || '');
     updateUnitAddress('streetNumber', streetNumber);
     updateUnitAddress('streetName', streetName);
     updateUnitAddress('city', data.property.city || '');
@@ -91,10 +188,14 @@ export default function LeaseWizardStep2() {
 
   const handleNext = () => {
     // Validation
-    if (!formData.unitAddress.streetNumber || !formData.unitAddress.streetName) {
-      return;
-    }
-    if (!formData.unitAddress.city || !formData.unitAddress.postalCode) {
+    const missing: string[] = [];
+    if (!formData.unitAddress.streetNumber) missing.push('street number');
+    if (!formData.unitAddress.streetName) missing.push('street name');
+    if (!formData.unitAddress.city) missing.push('city');
+    if (!formData.unitAddress.postalCode) missing.push('postal code');
+
+    if (missing.length > 0) {
+      Alert.alert('Missing Information', `Please enter the ${missing.join(', ')} for the rental unit.`);
       return;
     }
 
@@ -150,10 +251,10 @@ export default function LeaseWizardStep2() {
               </View>
               <TouchableOpacity
                 style={[styles.toggleModeButton, { borderColor: primaryColor }]}
-                onPress={() => setUsePropertySelector(!usePropertySelector)}
+                onPress={handleToggleMode}
               >
                 <MaterialCommunityIcons 
-                  name={usePropertySelector ? "pencil" : "home-search"} 
+                  name={usePropertySelector ? "pencil-outline" : "home-search"}
                   size={14} 
                   color={primaryColor} 
                 />
@@ -175,6 +276,7 @@ export default function LeaseWizardStep2() {
                   onSelect={handlePropertySelect}
                   selectedPropertyId={propertyContext?.propertyId}
                   selectedUnitId={propertyContext?.unitId}
+                  selectedSubUnitId={propertyContext?.subUnitId}
                   label="Select Property / Unit"
                   required
                   placeholder="Choose a property..."

@@ -7,15 +7,14 @@ import {
   Alert,
   Image,
   Modal,
-  Platform,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
@@ -39,7 +38,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { LeaseManageDialog, LeaseManageAction } from '@/components/lease-manage-dialog';
 import { exportTransactionsToExcel } from '@/utils/excelExport';
-import { fmtShortDate, fmtDate, toISODateLocal } from '@/lib/dateUtils';
+import { fmtShortDate, fmtDate, toISODateLocal, isOpenEndedDate } from '@/lib/dateUtils';
 
 interface CoTenant {
   id: string;
@@ -456,7 +455,7 @@ export default function TenantDetailScreen() {
             <MaterialCommunityIcons name="delete-outline" size={24} color={textColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleEdit}>
-            <MaterialCommunityIcons name="pencil" size={24} color={textColor} />
+            <MaterialCommunityIcons name="pencil-outline" size={24} color={textColor} />
           </TouchableOpacity>
         </View>
       </View>
@@ -506,7 +505,7 @@ export default function TenantDetailScreen() {
             <View style={[styles.heroStatDivider, { backgroundColor: borderColor }]} />
             <View style={styles.heroStat}>
               <ThemedText style={[styles.heroStatValue, { color: textColor }]}>
-                {tenant.endDate ? fmtShortDate(tenant.endDate) : 'N/A'}
+                {isOpenEndedDate(tenant.endDate) ? 'Month-to-Month' : tenant.endDate ? fmtShortDate(tenant.endDate) : 'N/A'}
               </ThemedText>
               <ThemedText style={[styles.heroStatLabel, { color: secondaryTextColor }]}>Lease End</ThemedText>
             </View>
@@ -715,7 +714,7 @@ export default function TenantDetailScreen() {
               >
                 <MaterialCommunityIcons name="download" size={20} color={secondaryTextColor} />
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.ledgerActionButton, { backgroundColor: '#10b981' }]}
                 onPress={() => {
                   if (!tenant || !property) return;
@@ -725,14 +724,17 @@ export default function TenantDetailScreen() {
                       type: 'income',
                       category: 'rent',
                       propertyId: tenantData?.propertyId,
+                      unitId: resolvedUnitId || undefined,
+                      subunitId: resolvedSubUnitId || undefined,
                       tenantId: tenant.id,
+                      leaseId: currentLease?.id || undefined,
                     },
                   });
                 }}
               >
                 <MaterialCommunityIcons name="cash-plus" size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.ledgerActionButton, { backgroundColor: isDark ? '#26282C' : '#111315' }]}
                 onPress={() => {
                   if (!tenant) return;
@@ -740,7 +742,10 @@ export default function TenantDetailScreen() {
                     pathname: '/add-transaction',
                     params: {
                       propertyId: tenantData?.propertyId,
+                      unitId: resolvedUnitId || undefined,
+                      subunitId: resolvedSubUnitId || undefined,
                       tenantId: tenant.id,
+                      leaseId: currentLease?.id || undefined,
                     },
                   });
                 }}
@@ -953,24 +958,16 @@ export default function TenantDetailScreen() {
                 {crDraftStart ? fmtShortDate(crDraftStart) : 'Start Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCRStartPicker && (
-              <DateTimePicker
-                value={crDraftStart ? new Date(crDraftStart + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCRStartPicker(false);
-                  if (date) setCrDraftStart(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCRStartPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity
-                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
-                onPress={() => setShowCRStartPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCRStartPicker}
+              value={crDraftStart}
+              onConfirm={(date) => {
+                setCrDraftStart(toISODateLocal(date));
+                setShowCRStartPicker(false);
+              }}
+              onCancel={() => setShowCRStartPicker(false)}
+              title="Start Date"
+            />
 
             <TouchableOpacity
               style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor, marginBottom: 20, backgroundColor: isDark ? '#141517' : '#F7F7F8' }}
@@ -980,24 +977,16 @@ export default function TenantDetailScreen() {
                 {crDraftEnd ? fmtShortDate(crDraftEnd) : 'End Date'}
               </ThemedText>
             </TouchableOpacity>
-            {showCREndPicker && (
-              <DateTimePicker
-                value={crDraftEnd ? new Date(crDraftEnd + 'T00:00:00') : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(_e, date) => {
-                  if (Platform.OS !== 'ios') setShowCREndPicker(false);
-                  if (date) setCrDraftEnd(toISODateLocal(date));
-                }}
-              />
-            )}
-            {showCREndPicker && Platform.OS === 'ios' && (
-              <TouchableOpacity
-                style={{ alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 6, marginBottom: 4 }}
-                onPress={() => setShowCREndPicker(false)}>
-                <ThemedText style={{ color: primaryColor, fontWeight: '600' }}>Done</ThemedText>
-              </TouchableOpacity>
-            )}
+            <AppDatePicker
+              visible={showCREndPicker}
+              value={crDraftEnd}
+              onConfirm={(date) => {
+                setCrDraftEnd(toISODateLocal(date));
+                setShowCREndPicker(false);
+              }}
+              onCancel={() => setShowCREndPicker(false)}
+              title="End Date"
+            />
 
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <TouchableOpacity

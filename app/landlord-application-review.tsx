@@ -439,9 +439,10 @@ export default function LandlordApplicationReviewScreen() {
                   <TouchableOpacity
                     style={[
                       styles.rejectButton,
-                      { borderColor: primaryColor, paddingVertical: 10, flex: 1, minWidth: 140, alignItems: 'center' },
+                      { borderColor: primaryColor, paddingVertical: 10, flex: 1, minWidth: 140, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 },
                     ]}
                     onPress={() => handleEditLease(applicationLease)}>
+                    <MaterialCommunityIcons name="pencil-outline" size={18} color={textPrimaryColor} />
                     <ThemedText style={[styles.modalButtonTextOutline, { color: textPrimaryColor }]}>Edit Lease</ThemedText>
                   </TouchableOpacity>
                 )}

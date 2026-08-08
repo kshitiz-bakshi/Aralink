@@ -24,7 +24,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { checkEntityHasTenant, createLease, DbLease, deleteImage, fetchLeasesByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { checkEntityHasTenant, createLease, DbLease, DbTransaction, deleteImage, fetchLeasesByProperty, fetchTransactionsByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { getFullAddressWithUnit } from '@/lib/addressUtils';
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
 import { Property, SubUnit, Unit, usePropertyStore } from '@/store/propertyStore';
@@ -47,7 +48,7 @@ export default function PropertyDetailScreen() {
     deleteSubUnit,
     loadFromSupabase,
   } = usePropertyStore();
-  const { getTenantsByProperty, loadFromSupabase: loadTenants } = useTenantStore();
+  const { tenants, getTenantsByProperty, loadFromSupabase: loadTenants } = useTenantStore();
 
   const [property, setProperty] = useState<Property | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -60,6 +61,7 @@ export default function PropertyDetailScreen() {
   const [showRoomModal, setShowRoomModal] = useState(false);
   const [selectedRoomUnitId, setSelectedRoomUnitId] = useState<string | undefined>(undefined);
   const [propertyLeases, setPropertyLeases] = useState<DbLease[]>([]);
+  const [propertyTransactions, setPropertyTransactions] = useState<DbTransaction[]>([]);
   const [isUpdatingPhotos, setIsUpdatingPhotos] = useState(false);
   const [isUploadingLease, setIsUploadingLease] = useState(false);
 
@@ -101,7 +103,12 @@ export default function PropertyDetailScreen() {
     setIsLoading(true);
     try {
       if (user?.id) {
-        await Promise.all([loadFromSupabase(user.id), loadTenants(user.id)]);
+        // Force reload — this runs on every focus (see useFocusEffect below),
+        // whose whole purpose is to reflect changes made on other screens
+        // (e.g. deleting a tenant from tenant-detail, editing a room). The
+        // store's staleness-cache guard would otherwise skip the refetch and
+        // leave stale unit/room occupancy data showing here.
+        await Promise.all([loadFromSupabase(user.id, true), loadTenants(user.id)]);
       }
       const fetchedProperty = getPropertyById(id);
       if (fetchedProperty) {
@@ -110,6 +117,12 @@ export default function PropertyDetailScreen() {
       // Load leases for this property so the room modal can show "View Lease"
       const leases = await fetchLeasesByProperty(id);
       setPropertyLeases(leases);
+
+      // Load this property's income/expense history (Accounting <-> Tenant
+      // <-> Property all read the same `transactions` rows, so whatever was
+      // logged from either screen shows up here too).
+      const txns = await fetchTransactionsByProperty(id);
+      setPropertyTransactions(txns);
     } catch (error) {
       console.error('Error loading property:', error);
     } finally {
@@ -198,7 +211,8 @@ export default function PropertyDetailScreen() {
       } else {
         setShowUnitModal(false);
         setShowRoomModal(false);
-        loadFromSupabase(user.id, true);
+        await loadFromSupabase(user.id, true);
+        refreshProperty();
       }
     } else {
       Alert.alert('Delete Failed', result.error || 'Something went wrong. Please try again.');
@@ -601,6 +615,21 @@ export default function PropertyDetailScreen() {
     ? property.units[0].subUnits
     : [];
 
+  // Occupancy is only reliable via tenant_property_links (tenantStore), since
+  // the units/sub_units `isOccupied`/`tenantName` DB columns are never kept in
+  // sync when a tenant is assigned through Add Tenant or the lease-signing flow.
+  const propertyTenants = tenants.filter(t => String(t.propertyId) === String(property.id));
+  const getSubUnitTenant = (subUnitId: string) =>
+    propertyTenants.find(t => String(t.subUnitId) === String(subUnitId));
+  const getUnitTenant = (unitId: string) =>
+    propertyTenants.find(t => String(t.unitId) === String(unitId) && !t.subUnitId);
+  const isUnitOccupied = (unitId: string, unitSubUnits?: SubUnit[]) =>
+    !!getUnitTenant(unitId) || (unitSubUnits?.some(su => !!getSubUnitTenant(su.id)) ?? false);
+  const selectedRoomTenant = selectedRoom ? getSubUnitTenant(selectedRoom.id) : undefined;
+  const selectedRoomTenantName = selectedRoomTenant
+    ? `${selectedRoomTenant.firstName} ${selectedRoomTenant.lastName}`.trim()
+    : selectedRoom?.tenantName;
+
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
       {/* Header */}
@@ -616,7 +645,7 @@ export default function PropertyDetailScreen() {
               style={[styles.editButton, { backgroundColor: 'transparent' }]}
             >
               <MaterialCommunityIcons 
-                name="pencil" 
+                name="pencil-outline"
                 size={20} 
                 color={textColor} 
               />
@@ -995,28 +1024,32 @@ export default function PropertyDetailScreen() {
                   </ThemedText>
                 </View>
               ) : (
-                rooms.map((room) => (
-                  <TouchableOpacity
-                    key={room.id}
-                    style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
-                    onPress={() => {
-                      setSelectedRoomUnitId(property.units[0]?.id);
-                      setSelectedRoom(room);
-                      setShowRoomModal(true);
-                    }}
-                  >
-                    <View style={styles.roomInfo}>
-                      <ThemedText style={[styles.roomName, { color: textColor }]}>
-                        Room {room.name}
-                      </ThemedText>
-                      <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]}>
-                        {room.rentPrice ? `$${room.rentPrice.toLocaleString()}/mo` : 'No rent set'}
-                        {room.tenantName && ` • ${room.tenantName}`}
-                      </ThemedText>
-                    </View>
-                    <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
-                  </TouchableOpacity>
-                ))
+                rooms.map((room) => {
+                  const roomTenant = getSubUnitTenant(room.id);
+                  const roomTenantName = roomTenant ? `${roomTenant.firstName} ${roomTenant.lastName}`.trim() : room.tenantName;
+                  return (
+                    <TouchableOpacity
+                      key={room.id}
+                      style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                      onPress={() => {
+                        setSelectedRoomUnitId(property.units[0]?.id);
+                        setSelectedRoom(room);
+                        setShowRoomModal(true);
+                      }}
+                    >
+                      <View style={styles.roomInfo}>
+                        <ThemedText style={[styles.roomName, { color: textColor }]}>
+                          Room {room.name}
+                        </ThemedText>
+                        <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]}>
+                          {room.rentPrice ? `$${room.rentPrice.toLocaleString()}/mo` : 'No rent set'}
+                          {' • '}{roomTenantName ? roomTenantName : 'Vacant'}
+                        </ThemedText>
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
+                    </TouchableOpacity>
+                  );
+                })
               )}
             </View>
           )}
@@ -1053,7 +1086,7 @@ export default function PropertyDetailScreen() {
                           {unit.rentEntireUnit
                             ? `Entire unit${unit.defaultRentPrice ? ` • $${unit.defaultRentPrice.toLocaleString()}/mo` : ''}`
                             : `${unit.subUnits.length} room${unit.subUnits.length !== 1 ? 's' : ''}`}
-                          {unit.isOccupied ? ' • Occupied' : ' • Vacant'}
+                          {isUnitOccupied(unit.id, unit.subUnits) ? ' • Occupied' : ' • Vacant'}
                         </ThemedText>
                       </View>
                       <MaterialCommunityIcons name="chevron-right" size={24} color={secondaryTextColor} />
@@ -1129,7 +1162,60 @@ export default function PropertyDetailScreen() {
               <ThemedText style={[styles.leaseViewButtonText, { color: primaryColor }]}>View Leases</ThemedText>
             </TouchableOpacity>
           </View>
-          
+
+        </View>
+
+        {/* Income History — same `transactions` rows as the Accounting
+            income list and each tenant's ledger; whatever's logged from
+            either screen shows up here too. */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+              Income History
+            </ThemedText>
+          </View>
+
+          {propertyTransactions.length === 0 ? (
+            <View style={[styles.leaseCard, { backgroundColor: cardBgColor, borderColor }]}>
+              <ThemedText style={{ color: secondaryTextColor }}>
+                No income recorded for this property yet.
+              </ThemedText>
+            </View>
+          ) : (
+            <>
+              {propertyTransactions.slice(0, 5).map((txn) => {
+                const unit = txn.unit_id ? property.units.find(u => u.id === txn.unit_id) : undefined;
+                const subUnit = txn.subunit_id ? unit?.subUnits?.find(su => su.id === txn.subunit_id) : undefined;
+                const location = getFullAddressWithUnit(property, unit?.name, subUnit?.name);
+                return (
+                  <TouchableOpacity
+                    key={txn.id}
+                    style={[styles.roomCard, { backgroundColor: cardBgColor, borderColor }]}
+                    onPress={() => router.push(`/transaction-detail?id=${txn.id}` as any)}
+                  >
+                    <View style={styles.roomInfo}>
+                      <ThemedText style={[styles.roomName, { color: textColor }]} numberOfLines={1}>
+                        {txn.description || `${txn.category.charAt(0).toUpperCase()}${txn.category.slice(1)} Payment`}
+                      </ThemedText>
+                      <ThemedText style={[styles.roomDetails, { color: secondaryTextColor }]} numberOfLines={1}>
+                        {location} • {fmtDate(txn.date)}
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={{ color: txn.type === 'income' ? '#16A34A' : '#DC2626', fontWeight: '700' }}>
+                      {txn.type === 'income' ? '+' : '-'}${txn.amount.toLocaleString()}
+                    </ThemedText>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={[styles.leaseViewButton, { borderColor: primaryColor, marginTop: 4 }]}
+                onPress={() => router.push('/accounting' as any)}
+              >
+                <MaterialCommunityIcons name="cash-multiple" size={18} color={primaryColor} />
+                <ThemedText style={[styles.leaseViewButtonText, { color: primaryColor }]}>View All Income</ThemedText>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
       </ScrollView>
@@ -1156,7 +1242,7 @@ export default function PropertyDetailScreen() {
                     router.push(`/add-unit?propertyId=${property.id}&unitId=${selectedUnit?.id}`);
                   }}
                 >
-                  <MaterialCommunityIcons name="pencil" size={22} color={primaryColor} />
+                  <MaterialCommunityIcons name="pencil-outline" size={22} color={primaryColor} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
@@ -1201,7 +1287,7 @@ export default function PropertyDetailScreen() {
                   <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
                     <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Status</ThemedText>
                     <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
-                      {selectedUnit.isOccupied ? 'Occupied' : 'Vacant'}
+                      {isUnitOccupied(selectedUnit.id, selectedUnit.subUnits) ? 'Occupied' : 'Vacant'}
                     </ThemedText>
                   </View>
                   {selectedUnit.bedrooms && (
@@ -1302,9 +1388,32 @@ export default function PropertyDetailScreen() {
               <ThemedText style={[styles.modalTitle, { color: textColor }]}>
                 {selectedRoom?.name ? `Room ${selectedRoom.name}` : 'Room Details'}
             </ThemedText>
-              <TouchableOpacity onPress={() => setShowRoomModal(false)}>
-                <MaterialCommunityIcons name="close" size={24} color={textColor} />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const unitId = selectedRoomUnitId ?? property?.units[0]?.id;
+                    setShowRoomModal(false);
+                    if (property && unitId && selectedRoom) {
+                      router.push(`/add-room?propertyId=${property.id}&unitId=${unitId}&roomId=${selectedRoom.id}` as any);
+                    }
+                  }}
+                >
+                  <MaterialCommunityIcons name="pencil-outline" size={22} color={primaryColor} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (selectedRoom) {
+                      setShowRoomModal(false);
+                      handleDeleteRoom(selectedRoom);
+                    }
+                  }}
+                >
+                  <MaterialCommunityIcons name="trash-can-outline" size={22} color="#ef4444" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowRoomModal(false)}>
+                  <MaterialCommunityIcons name="close" size={24} color={textColor} />
+                </TouchableOpacity>
+              </View>
             </View>
             
             {selectedRoom && (
@@ -1357,11 +1466,11 @@ export default function PropertyDetailScreen() {
                     </View>
                   )}
 
-                  {selectedRoom.tenantName && (
+                  {selectedRoomTenantName && (
                     <View style={[styles.modalInfoRow, { borderBottomColor: borderColor }]}>
                       <ThemedText style={[styles.modalInfoLabel, { color: secondaryTextColor }]}>Tenant</ThemedText>
                       <ThemedText style={[styles.modalInfoValue, { color: textColor }]}>
-                        {selectedRoom.tenantName}
+                        {selectedRoomTenantName}
                       </ThemedText>
                     </View>
                   )}
@@ -1418,13 +1527,14 @@ export default function PropertyDetailScreen() {
             
                 {/* Action Buttons */}
                 {(() => {
-                  const roomLease = selectedRoom.tenantId
-                    ? propertyLeases.find(l => l.tenant_id === selectedRoom.tenantId)
+                  const roomTenantId = selectedRoomTenant?.id ?? selectedRoom.tenantId;
+                  const roomLease = roomTenantId
+                    ? propertyLeases.find(l => l.tenant_id === roomTenantId)
                     : null;
                   const unitId = selectedRoomUnitId ?? property?.units[0]?.id;
                   const wizardUrl = unitId
-                    ? `/lease-wizard?propertyId=${property?.id}&unitId=${unitId}&roomId=${selectedRoom.id}${selectedRoom.tenantName ? `&tenantName=${encodeURIComponent(selectedRoom.tenantName)}` : ''}`
-                    : `/lease-wizard?propertyId=${property?.id}${selectedRoom.tenantName ? `&tenantName=${encodeURIComponent(selectedRoom.tenantName)}` : ''}`;
+                    ? `/lease-wizard?propertyId=${property?.id}&unitId=${unitId}&roomId=${selectedRoom.id}${selectedRoomTenantName ? `&tenantName=${encodeURIComponent(selectedRoomTenantName)}` : ''}`
+                    : `/lease-wizard?propertyId=${property?.id}${selectedRoomTenantName ? `&tenantName=${encodeURIComponent(selectedRoomTenantName)}` : ''}`;
                   return (
                     <View style={styles.modalActionSection}>
                       {/* Top row: Upload | Generate */}
@@ -1460,30 +1570,6 @@ export default function PropertyDetailScreen() {
                         <ThemedText style={[styles.modalButtonText, { color: '#10b981' }]}>
                           {roomLease ? 'View Lease' : 'View Leases'}
                         </ThemedText>
-                      </TouchableOpacity>
-                      {/* Edit Room */}
-                      <TouchableOpacity
-                        style={[styles.modalEditButton, { backgroundColor: primaryColor }]}
-                        onPress={() => {
-                          setShowRoomModal(false);
-                          if (property && unitId) {
-                            router.push(`/add-room?propertyId=${property.id}&unitId=${unitId}&roomId=${selectedRoom.id}` as any);
-                          }
-                        }}
-                      >
-                        <MaterialCommunityIcons name="pencil" size={18} color={onPrimaryColor} />
-                        <ThemedText style={[styles.modalButtonText, { color: onPrimaryColor }]}>Edit Room</ThemedText>
-                      </TouchableOpacity>
-                      {/* Delete Room */}
-                      <TouchableOpacity
-                        style={[styles.modalEditButton, { backgroundColor: '#ef4444', marginTop: 8 }]}
-                        onPress={() => {
-                          setShowRoomModal(false);
-                          handleDeleteRoom(selectedRoom);
-                        }}
-                      >
-                        <MaterialCommunityIcons name="trash-can-outline" size={18} color="#fff" />
-                        <ThemedText style={styles.modalButtonText}>Delete Room</ThemedText>
                       </TouchableOpacity>
                     </View>
                   );
@@ -2019,23 +2105,9 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 8,
   },
-  modalEditButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 10,
-    gap: 8,
-  },
   modalButtonText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
-  },
-  modalEditButtonText: {
-    color: '#fff',
-    fontSize: 16,
     fontWeight: '600',
   },
   utilityRow: {

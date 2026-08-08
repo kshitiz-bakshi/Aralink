@@ -5,11 +5,10 @@ import { Circle, Svg } from 'react-native-svg';
 interface RentChartProps {
   collected: number;
   overdue: number;   // replaces notPaid + pending — truly unpaid amount
-  advance: number;   // collected > total: cash paid in advance
   total: number;
 }
 
-const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, total }) => {
+const RentChart: React.FC<RentChartProps> = ({ collected, overdue, total }) => {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -21,7 +20,6 @@ const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, tota
 
   const greenColor = '#34C759';
   const redColor = '#FF3B30';
-  const advanceColor = '#AF52DE'; // purple for cash in advance
   const trackColor = isDark ? '#26282C' : '#E5E5E7';
 
   const formatCurrency = (n: number) =>
@@ -42,7 +40,7 @@ const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, tota
           {paidPercent > 0 && (
             <Circle
               cx="18" cy="18" r="15.9154943092"
-              stroke={advance > 0 ? advanceColor : greenColor}
+              stroke={greenColor}
               strokeWidth="3.5"
               fill="transparent"
               strokeDasharray={`${paidPercent}, 100`}
@@ -56,7 +54,7 @@ const RentChart: React.FC<RentChartProps> = ({ collected, overdue, advance, tota
             ${formatCurrency(collected)}
           </Text>
           <Text style={[styles.centerTextSmall, { color: isDark ? '#9BA1A6' : '#6E7377' }]}>
-            {advance > 0 ? `+$${formatCurrency(advance)} adv.` : `of $${formatCurrency(total)}`}
+            of ${formatCurrency(total)}
           </Text>
         </View>
       </View>

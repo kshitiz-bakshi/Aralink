@@ -158,7 +158,7 @@ export default function SettingsScreen() {
             style={styles.profileImage}
           />
           <TouchableOpacity style={[styles.editButton, { backgroundColor: primaryColor }]}>
-            <MaterialCommunityIcons name="pencil" size={14} color={onPrimaryColor} />
+            <MaterialCommunityIcons name="pencil-outline" size={14} color={onPrimaryColor} />
           </TouchableOpacity>
           <ThemedText style={[styles.profileName, { color: textColor }]}>Alex Johnson</ThemedText>
           <ThemedText style={[styles.profileRole, { color: secondaryTextColor }]}>

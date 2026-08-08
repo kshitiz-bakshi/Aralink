@@ -16,6 +16,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -274,12 +275,19 @@ export default function LeaseWizardStep1() {
   };
 
   const handleNext = () => {
-    if (!formData.landlordName.trim()) return;
-    if (!formData.tenantNames[0]?.trim()) return;
+    if (!formData.landlordName.trim()) {
+      Alert.alert('Missing Information', "Please enter the landlord's name.");
+      return;
+    }
+    if (!formData.tenantNames[0]?.trim()) {
+      Alert.alert('Missing Information', 'Please enter at least one tenant name.');
+      return;
+    }
 
-    let shouldBlock = false;
+    let blockedMessage: string | null = null;
 
     formData.tenantNames.forEach((name, index) => {
+      if (blockedMessage) return;
       const matchedPerson = personOptions.find(
         p => (p.fullName || '').trim().toLowerCase() === name.trim().toLowerCase()
       );
@@ -289,16 +297,21 @@ export default function LeaseWizardStep1() {
       const currentEmail = (formData.tenantEmails && formData.tenantEmails[index]) || '';
       const status = emailStatus[index] || 'idle';
 
-      if (status === 'not_found' || status === 'checking') {
-        shouldBlock = true;
+      if (status === 'checking') {
+        blockedMessage = `Still verifying the email for ${name.trim()}. Please wait a moment and try again.`;
+      } else if (status === 'not_found') {
+        blockedMessage = `No account was found for ${name.trim()}'s email (${currentEmail.trim()}). Please double-check the email address.`;
       } else if (status === 'idle' && currentEmail.trim()) {
         // Check hasn't been triggered yet — trigger it now and block
         checkEmailInDatabase(currentEmail, index);
-        shouldBlock = true;
+        blockedMessage = `Verifying the email for ${name.trim()}. Please try again in a moment.`;
       }
     });
 
-    if (shouldBlock) return;
+    if (blockedMessage) {
+      Alert.alert('Cannot Continue', blockedMessage);
+      return;
+    }
 
     nextStep();
     router.push('/lease-wizard/step2');

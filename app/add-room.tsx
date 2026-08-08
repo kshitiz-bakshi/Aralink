@@ -14,15 +14,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
+import AppDatePicker from '@/components/AppDatePicker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePropertyStore } from '@/store/propertyStore';
 import { useAuthStore } from '@/store/authStore';
-import { supabase } from '@/lib/supabase';
-import { fmtDate } from '@/lib/dateUtils';
+import { supabase, uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
+import { fmtDate, toISODateLocal } from '@/lib/dateUtils';
 
 const ROOM_AMENITIES = [
   'Private Bathroom',
@@ -34,6 +34,8 @@ const SHARED_SPACES = [
   'Kitchen',
   'Living Room',
   'Laundry',
+  'Washrooms',
+  'Backyard',
 ];
 
 export default function AddRoomScreen() {
@@ -179,13 +181,30 @@ export default function AddRoomScreen() {
     setIsSubmitting(true);
 
     try {
+      // Upload local photos to Supabase Storage first — passing raw local
+      // file:// URIs straight to the DB left them inaccessible off-device
+      // and meant there was nothing in Storage for cascade-delete to clean up.
+      let uploadedPhotoUrls: string[] = [];
+      if (formData.photos.length > 0 && user?.id) {
+        const localPhotos = formData.photos.filter(uri => !uri.startsWith('http'));
+        const existingUrls = formData.photos.filter(uri => uri.startsWith('http'));
+        if (localPhotos.length > 0) {
+          uploadedPhotoUrls = await uploadMultipleImages(
+            localPhotos,
+            STORAGE_BUCKETS.UNIT_PHOTOS,
+            `rooms/${propertyId}`
+          );
+        }
+        uploadedPhotoUrls = [...existingUrls, ...uploadedPhotoUrls];
+      }
+
       const roomData = {
         name: roomNumber,
         type: 'bedroom' as const, // Default to bedroom, can be changed later
         rentPrice: formData.rentPrice ? parseFloat(formData.rentPrice) : undefined,
         area: formData.area ? parseInt(formData.area) : undefined,
         availabilityDate: formData.availabilityDate || undefined,
-        photos: formData.photos.length > 0 ? formData.photos : undefined,
+        photos: uploadedPhotoUrls.length > 0 ? uploadedPhotoUrls : undefined,
         amenities: formData.amenities.length > 0 ? formData.amenities : undefined,
         sharedSpaces: formData.sharedSpaces.length > 0 ? formData.sharedSpaces : undefined,
       };
@@ -226,8 +245,12 @@ export default function AddRoomScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteSubUnit(propertyId, unitId, roomId, user?.id ?? '');
-              router.back();
+              const result = await deleteSubUnit(propertyId, unitId, roomId, user?.id ?? '');
+              if (result.deleted) {
+                router.back();
+              } else {
+                Alert.alert('Delete Failed', result.error || 'Something went wrong. Please try again.');
+              }
             } catch {
               Alert.alert('Error', 'Failed to delete room. Please try again.');
             }
@@ -251,20 +274,13 @@ export default function AddRoomScreen() {
         <ThemedText style={[styles.headerTitle, { color: textColor }]}>
           {isEditing ? 'Edit Room' : 'Add New Room'}
         </ThemedText>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          {isEditing && (
-            <TouchableOpacity onPress={handleDeleteRoom} style={{ padding: 4 }}>
-              <MaterialCommunityIcons name="trash-can-outline" size={22} color="#ef4444" />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={[styles.saveHeaderButton, { backgroundColor: primaryColor }]}
-            onPress={handleSave}
-            disabled={isSubmitting}
-          >
-            <ThemedText style={[styles.saveHeaderButtonText, { color: onPrimaryColor }]}>Save</ThemedText>
+        {isEditing ? (
+          <TouchableOpacity onPress={handleDeleteRoom} style={styles.headerIconButton}>
+            <MaterialCommunityIcons name="trash-can-outline" size={22} color="#ef4444" />
           </TouchableOpacity>
-        </View>
+        ) : (
+          <View style={styles.headerIconButton} />
+        )}
       </View>
 
       <KeyboardAvoidingView
@@ -354,24 +370,15 @@ export default function AddRoomScreen() {
                   {formData.availabilityDate ? formatDate(formData.availabilityDate) : 'Select date'}
                 </ThemedText>
               </TouchableOpacity>
-              {showDatePicker && (
-                <DateTimePicker
-                  value={formData.availabilityDate ? new Date(formData.availabilityDate) : new Date()}
-                  mode="date"
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(_, date) => {
-                    if (Platform.OS === 'android') setShowDatePicker(false);
-                    if (date) setFormData(prev => ({ ...prev, availabilityDate: date.toISOString().split('T')[0] }));
-                  }}
-                />
-              )}
-              {showDatePicker && Platform.OS === 'ios' && (
-                <TouchableOpacity
-                  style={[styles.dateConfirm, { backgroundColor: primaryColor }]}
-                  onPress={() => setShowDatePicker(false)}>
-                  <ThemedText style={{ color: onPrimaryColor, fontWeight: '700' }}>Done</ThemedText>
-                </TouchableOpacity>
-              )}
+              <AppDatePicker
+                visible={showDatePicker}
+                value={formData.availabilityDate}
+                onConfirm={(date) => {
+                  setFormData(prev => ({ ...prev, availabilityDate: toISODateLocal(date) }));
+                  setShowDatePicker(false);
+                }}
+                onCancel={() => setShowDatePicker(false)}
+              />
             </View>
           </View>
 
@@ -466,6 +473,20 @@ export default function AddRoomScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Save Button — in-flow footer so it's never cropped by header space
+          constraints on real devices (was previously crammed into the header). */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 16, backgroundColor: bgColor, borderTopColor: borderColor }]}>
+        <TouchableOpacity
+          style={[styles.submitButton, { backgroundColor: primaryColor }]}
+          onPress={handleSave}
+          disabled={isSubmitting}
+        >
+          <ThemedText style={[styles.submitButtonText, { color: onPrimaryColor }]}>
+            {isSubmitting ? 'Saving...' : isEditing ? 'Save Changes' : 'Add Room'}
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
     </ThemedView>
   );
 }
@@ -497,13 +518,23 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  saveHeaderButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+  headerIconButton: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  saveHeaderButtonText: {
-    color: '#fff',
+  footer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+  },
+  submitButton: {
+    height: 56,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  submitButtonText: {
     fontSize: 16,
     fontWeight: '700',
   },
