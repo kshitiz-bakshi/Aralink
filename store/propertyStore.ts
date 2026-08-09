@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import {
   ArchiveDeleteResult,
   createProperty as createPropertyInDb,
+  createPropertyWithLink,
   createSubUnit as createSubUnitInDb,
   createUnit as createUnitInDb,
   DbProperty,
@@ -16,10 +17,21 @@ import {
   fetchSubUnitsForUnit,
   fetchUnitsForProperty,
   STORAGE_BUCKETS,
+  unlinkPropertyCollaborator,
   updatePropertyInDb,
   updateSubUnitInDb,
   updateUnitInDb,
 } from '@/lib/supabase';
+
+// Info needed to link the property being created to a landlord and/or
+// property manager. Passed straight through to create_property_with_link.
+export interface PropertyLinkInfo {
+  createdByRole: 'landlord' | 'manager';
+  landlordId: string;
+  managerId?: string;
+  landlordName?: string;
+  managerName?: string;
+}
 
 // Types for property management
 export interface SubUnit {
@@ -85,7 +97,14 @@ export interface Property {
   name?: string; // Property name (optional)
   propertyType: 'single_unit' | 'multi_unit' | 'commercial' | 'parking';
   landlordName?: string;
-  
+  propertyManagerName?: string;
+
+  // Ownership / linking — userId is always the landlord who owns this
+  // property record, regardless of who actually created it.
+  userId?: string;
+  createdByUserId?: string;
+  createdByRole?: 'landlord' | 'manager';
+
   // Rental options (not for multi_unit)
   rentCompleteProperty?: boolean; // Only for single_unit, commercial, parking
   description?: string;
@@ -118,7 +137,11 @@ export interface PropertyStore {
   lastLoadedUserId?: string; // Track which user's properties are loaded
   
   // Actions
-  addProperty: (property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>, userId?: string) => Promise<string>;
+  addProperty: (
+    property: Omit<Property, 'id' | 'createdAt' | 'units' | 'status'>,
+    userId?: string,
+    linkInfo?: PropertyLinkInfo
+  ) => Promise<{ id: string; wasExisting: boolean }>;
   updateProperty: (id: string, updates: Partial<Property>) => Promise<void>;
   deleteProperty: (id: string, userId: string) => Promise<ArchiveDeleteResult>;
   getPropertyById: (id: string) => Property | undefined;
@@ -159,6 +182,7 @@ const dbToLocalProperty = (dbProperty: DbProperty, units: Unit[] = []): Property
   country: dbProperty.country,
   propertyType: dbProperty.property_type,
   landlordName: dbProperty.landlord_name,
+  propertyManagerName: dbProperty.property_manager_name,
   rentCompleteProperty: dbProperty.rent_complete_property,
   description: dbProperty.description,
   photos: dbProperty.photos,
@@ -168,6 +192,9 @@ const dbToLocalProperty = (dbProperty: DbProperty, units: Unit[] = []): Property
   units,
   status: dbProperty.status,
   createdAt: dbProperty.created_at,
+  userId: dbProperty.user_id,
+  createdByUserId: dbProperty.created_by_user_id,
+  createdByRole: dbProperty.created_by_role,
 });
 
 // Helper to convert local property to DB format
@@ -310,45 +337,55 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
     }
   },
   
-  addProperty: async (propertyData, userId) => {
+  addProperty: async (propertyData, userId, linkInfo) => {
     // Try to save to Supabase if userId is provided
     if (userId) {
       try {
         set({ isLoading: true });
-        
-        const dbPropertyData = localToDbProperty({
-          ...propertyData,
-          utilities: propertyData.utilities || {
-            electricity: 'landlord',
-            heatGas: 'landlord',
-            water: 'landlord',
-            wifi: 'landlord',
-            rentalEquipments: 'landlord',
-          },
-        } as Property, userId);
-        
-        // Save to Supabase - let it generate UUID
-        const savedProperty = await createPropertyInDb(dbPropertyData as any);
-        
-        if (savedProperty) {
-          // For non-multi-unit properties, always auto-create a default unit so the
-          // property never shows 0 units regardless of the rentCompleteProperty setting.
-          if (propertyData.propertyType !== 'multi_unit') {
-            await createUnitInDb({
-              property_id: savedProperty.id,
-              name: 'Main Unit',
-              description: '',
-              unit_type: 'apartment',
-              is_occupied: false,
-            });
-          }
 
+        const utilities = propertyData.utilities || {
+          electricity: 'landlord' as const,
+          heatGas: 'landlord' as const,
+          water: 'landlord' as const,
+          wifi: 'landlord' as const,
+          rentalEquipments: 'landlord' as const,
+        };
+
+        // Single entry point for both creation paths: landlord (optionally
+        // linking a manager) and manager (required, already-registered
+        // landlord). Always stores the property under the landlord's
+        // user_id and links via property_collaborators — never a
+        // duplicate row for the same real property.
+        const result = await createPropertyWithLink({
+          createdBy: userId,
+          createdByRole: linkInfo?.createdByRole ?? 'landlord',
+          landlordId: linkInfo?.landlordId ?? userId,
+          managerId: linkInfo?.managerId,
+          landlordName: linkInfo?.landlordName ?? propertyData.landlordName,
+          managerName: linkInfo?.managerName,
+          name: propertyData.name,
+          address1: propertyData.address1 || '',
+          address2: propertyData.address2,
+          city: propertyData.city || '',
+          state: propertyData.state || '',
+          zipCode: propertyData.zipCode || '',
+          country: propertyData.country || 'Canada',
+          propertyType: propertyData.propertyType || 'single_unit',
+          rentCompleteProperty: propertyData.rentCompleteProperty,
+          description: propertyData.description,
+          photos: propertyData.photos,
+          parkingIncluded: propertyData.parkingIncluded,
+          rentAmount: propertyData.rentAmount,
+          utilities,
+        });
+
+        if (result) {
           // Refresh list from API to get the latest data with correct UUIDs
-          await get().loadFromSupabase(userId);
+          await get().loadFromSupabase(userId, true);
           set({ isLoading: false });
-          return savedProperty.id;
+          return { id: result.propertyId, wasExisting: result.wasExisting };
         }
-        
+
         set({ isLoading: false });
       } catch (error) {
         console.error('Error saving property to Supabase:', error);
@@ -373,9 +410,9 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
       },
     };
     set((state) => ({ properties: [...state.properties, newProperty] }));
-    return id;
+    return { id, wasExisting: false };
   },
-  
+
   updateProperty: async (id, updates) => {
     // Update local state first
     set((state) => ({
@@ -409,7 +446,18 @@ export const usePropertyStore = create<PropertyStore>((set, get) => ({
   },
   
   deleteProperty: async (id, userId) => {
-    const result = await deletePropertyFromDb(id, userId);
+    // A property is only ever permanently deleted (and archived) by the
+    // landlord who owns it. Anyone else acting on it here is a linked
+    // property manager — for them "delete" only means removing their own
+    // link; the property, its units/tenants/leases, and the landlord's
+    // access are left completely untouched.
+    const property = get().properties.find((p) => p.id === id);
+    const isOwner = !property?.userId || property.userId === userId;
+
+    const result = isOwner
+      ? await deletePropertyFromDb(id, userId)
+      : await unlinkPropertyCollaborator(id, userId);
+
     if (result.deleted) {
       set((state) => ({
         properties: state.properties.filter((p) => p.id !== id),

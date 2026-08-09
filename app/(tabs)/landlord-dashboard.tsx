@@ -30,7 +30,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
-import { getUserProfile, supabase, fetchLandlordNotifications } from '@/lib/supabase';
+import { fetchProperties, getUserProfile, supabase, fetchLandlordNotifications } from '@/lib/supabase';
 import { getActivityIconInfo } from '@/utils/activityIcon';
 
 interface RentCollection {
@@ -299,9 +299,22 @@ export default function LandlordDashboardScreen() {
         dMonth.setMonth(dMonth.getMonth() + 1);
       }
 
-      // Fetch ALL transactions for the last 12 months
+      // Resolve every property this user can actually access — owned
+      // (landlord) plus linked (property manager), never just "created by
+      // me". Every stats/count query below is scoped by property_id
+      // against this list instead of a raw landlord_id/user_id match, so a
+      // linked property manager sees the same numbers a landlord would for
+      // the same property. This also fixes leases/tenant_property_links,
+      // which never actually had a landlord_id column — those two counts
+      // were silently returning 0 for everyone before this fix.
+      const accessibleProperties = await fetchProperties(user.id);
+      const propertyIds = accessibleProperties.map((p) => p.id);
+      const propertyCount = propertyIds.length;
+
+      // Fetch ALL transactions for the last 12 months. `.in('property_id', [])`
+      // is a valid, empty-safe filter (matches nothing) — no need to special-
+      // case a user with zero accessible properties.
       const [
-        { count: propertyCount },
         { count: tenantCount },
         { count: leaseCount },
         { count: maintenanceCount },
@@ -309,20 +322,26 @@ export default function LandlordDashboardScreen() {
         { data: leaseData },
         { data: txns }
       ] = await Promise.all([
-        supabase.from('properties').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
-        supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).eq('status', 'active'),
-        supabase.from('leases').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).not('status', 'in', '(draft,terminated)'),
-        supabase.from('maintenance_requests').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['pending', 'in_progress']),
-        supabase.from('applicants').select('id', { count: 'exact', head: true }).eq('landlord_id', user.id).in('status', ['invited', 'applied']),
+        supabase.from('tenant_property_links').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).eq('status', 'active'),
+        supabase.from('leases').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).not('status', 'in', '(draft,terminated)'),
+        supabase.from('maintenance_requests').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).in('status', ['pending', 'in_progress']),
+        supabase.from('applicants').select('id', { count: 'exact', head: true }).in('property_id', propertyIds).in('status', ['invited', 'applied']),
         // Rent total is sourced from the LEASE's own rent (form_data.baseRent),
         // never the property/unit's listed rent — the lease is the final
         // agreed amount. Only leases with status 'active' count: that status
         // specifically means the tenant has moved in (as opposed to
         // 'signed_pending_move_in'), so this also satisfies the "tenant has
         // moved in" requirement without a separate date check.
-        supabase.from('leases').select('effective_date, expiry_date, form_data').eq('user_id', user.id).eq('status', 'active').not('tenant_id', 'is', null),
-        supabase.from('transactions').select('type, category, amount, date, status').eq('user_id', user.id).gte('date', months[0].start).lte('date', months[11].end)
-      ]);
+        supabase.from('leases').select('effective_date, expiry_date, form_data').in('property_id', propertyIds).eq('status', 'active').not('tenant_id', 'is', null),
+        supabase.from('transactions').select('type, category, amount, date, status').in('property_id', propertyIds).gte('date', months[0].start).lte('date', months[11].end)
+      ]) as [
+        { count: number | null },
+        { count: number | null },
+        { count: number | null },
+        { count: number | null },
+        { data: ActiveLeaseRentRow[] | null },
+        { data: { type: string; category: string; amount: number; date: string; status: string }[] | null }
+      ];
 
       // Calculate occupancy rate
       let occupancyRate = 0;

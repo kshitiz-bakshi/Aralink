@@ -58,6 +58,11 @@ interface SelectedAddress {
   unitId?: string;
   subUnitId?: string;
   unitName?: string;
+  // The property's actual landlord (properties.user_id) — always the
+  // landlord, even when a linked property manager is the one creating
+  // this request. Falls back to the current user for older cached
+  // property records that predate this field.
+  landlordId: string;
 }
 
 export default function LandlordMaintenanceCreateScreen() {
@@ -118,6 +123,7 @@ export default function LandlordMaintenanceCreateScreen() {
       unitId: data.unit?.id,
       subUnitId: data.subUnit?.id,
       unitName,
+      landlordId: data.property.userId || user?.id || '',
     });
   };
 
@@ -143,8 +149,12 @@ export default function LandlordMaintenanceCreateScreen() {
     try {
       const id = await addRequest(
         {
-          tenantId: user.id, // landlord is the reporter for property-initiated requests
-          landlordId: user.id,
+          tenantId: user.id, // landlord/manager is the reporter for property-initiated requests
+          // Always the property's actual landlord (properties.user_id) —
+          // not just whoever is logged in, so a manager-created request
+          // still shows up for the landlord. Falls back to the current
+          // user only if the property has no resolvable owner.
+          landlordId: selectedAddress.landlordId || user.id,
           propertyId: selectedAddress.propertyId,
           unitId: selectedAddress.unitId,
           subUnitId: selectedAddress.subUnitId,

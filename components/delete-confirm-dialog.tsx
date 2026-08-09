@@ -21,6 +21,10 @@ interface Props {
   tenantName?: string | null;
   tenantCount?: number;
   isLoading: boolean;
+  // True when the acting user is a linked property manager, not the
+  // owning landlord — "delete" then only removes their own link to the
+  // property, the property itself stays fully intact for the landlord.
+  isManagerUnlink?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -40,6 +44,7 @@ export function DeleteConfirmDialog({
   tenantName,
   tenantCount = 0,
   isLoading,
+  isManagerUnlink = false,
   onCancel,
   onConfirm,
 }: Props) {
@@ -54,10 +59,15 @@ export function DeleteConfirmDialog({
 
   const label = ENTITY_LABEL[entityType];
 
-  const title = `Delete ${label.charAt(0).toUpperCase() + label.slice(1)}`;
+  const title =
+    isManagerUnlink && entityType === 'property'
+      ? 'Remove Property'
+      : `Delete ${label.charAt(0).toUpperCase() + label.slice(1)}`;
 
   let message: string;
-  if (entityType === 'tenant') {
+  if (isManagerUnlink && entityType === 'property') {
+    message = `This will remove ${entityName ? `"${entityName}"` : 'this property'} from your list. It stays active for the landlord — units, tenants, leases, and other property data are unaffected.`;
+  } else if (entityType === 'tenant') {
     message = `Are you sure you want to delete ${entityName ? `"${entityName}"` : 'this tenant'}? This action cannot be undone.`;
   } else if (hasTenant) {
     const who =
@@ -75,11 +85,11 @@ export function DeleteConfirmDialog({
       <View style={styles.centeredWrapper} pointerEvents="box-none">
         <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
           {/* Icon */}
-          <View style={[styles.iconCircle, { backgroundColor: hasTenant ? '#fef3c720' : '#fee2e220' }]}>
+          <View style={[styles.iconCircle, { backgroundColor: isManagerUnlink ? '#3b82f620' : hasTenant ? '#fef3c720' : '#fee2e220' }]}>
             <MaterialCommunityIcons
-              name={hasTenant ? 'alert-circle-outline' : 'trash-can-outline'}
+              name={isManagerUnlink ? 'link-off' : hasTenant ? 'alert-circle-outline' : 'trash-can-outline'}
               size={32}
-              color={hasTenant ? '#f59e0b' : '#ef4444'}
+              color={isManagerUnlink ? '#3b82f6' : hasTenant ? '#f59e0b' : '#ef4444'}
             />
           </View>
 
@@ -100,7 +110,12 @@ export function DeleteConfirmDialog({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.button, styles.deleteButton, { opacity: isLoading ? 0.7 : 1 }]}
+              style={[
+                styles.button,
+                styles.deleteButton,
+                isManagerUnlink && { backgroundColor: '#3b82f6' },
+                { opacity: isLoading ? 0.7 : 1 },
+              ]}
               onPress={onConfirm}
               disabled={isLoading}
             >
@@ -108,7 +123,7 @@ export function DeleteConfirmDialog({
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <ThemedText style={styles.deleteText}>
-                  {hasTenant && entityType !== 'tenant' ? 'Delete Anyway' : 'Delete'}
+                  {isManagerUnlink ? 'Remove' : hasTenant && entityType !== 'tenant' ? 'Delete Anyway' : 'Delete'}
                 </ThemedText>
               )}
             </TouchableOpacity>
