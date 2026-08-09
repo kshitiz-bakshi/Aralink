@@ -21,7 +21,7 @@ import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
+import { findProfileByEmailAndRole, uploadMultipleImages, STORAGE_BUCKETS } from '@/lib/supabase';
 import { StructuredAddress, EMPTY_ADDRESS } from '@/services/location-service';
 import { useAuthStore } from '@/store/authStore';
 import { usePropertyStore } from '@/store/propertyStore';
@@ -32,6 +32,10 @@ export default function AddPropertyScreen() {
   const insets = useSafeAreaInsets();
   const { addProperty, properties } = usePropertyStore();
   const { user } = useAuthStore();
+
+  // Use the app's existing role/profile logic — never ask the user to
+  // manually pick landlord vs. manager.
+  const isManager = user?.role === 'manager';
 
   const isDark = colorScheme === 'dark';
   const bgColor = isDark ? '#0B0B0C' : '#F2F2F4';
@@ -67,7 +71,11 @@ export default function AddPropertyScreen() {
     // Property details
     propertyType: 'single_unit' as 'single_unit' | 'multi_unit' | 'commercial' | 'parking',
     landlordName: user?.role === 'landlord' ? (user?.name || '') : '',
-    
+    landlordEmail: '', // required when the current user is a property manager
+    propertyManagerName: '', // optional, only shown/used when current user is a landlord
+    propertyManagerEmail: '', // optional, only shown/used when current user is a landlord
+
+
     // Rental options (conditional)
     rentCompleteProperty: false,
     description: '',
@@ -183,8 +191,74 @@ export default function AddPropertyScreen() {
       return;
     }
 
+    if (!user?.id) {
+      Alert.alert('Error', 'You must be signed in to add a property.');
+      return;
+    }
+
+    // Resolve landlord/manager linking based on the current user's
+    // existing role — never asked of the user. Email is always checked
+    // together with the correct role, never alone (the same email may
+    // exist under both a landlord and a manager profile).
+    let linkInfo:
+      | {
+          createdByRole: 'landlord' | 'manager';
+          landlordId: string;
+          managerId?: string;
+          landlordName?: string;
+          managerName?: string;
+        }
+      | undefined;
+
+    if (isManager) {
+      if (!formData.landlordName.trim() || !formData.landlordEmail.trim()) {
+        Alert.alert('Error', 'Please enter the landlord name and email.');
+        return;
+      }
+      const landlordProfile = await findProfileByEmailAndRole(formData.landlordEmail.trim(), 'landlord');
+      if (!landlordProfile) {
+        Alert.alert(
+          'Landlord Not Registered',
+          'The landlord is not registered in the system. Please ask the landlord to register first, then you can add the property on behalf of the landlord.'
+        );
+        return;
+      }
+      linkInfo = {
+        createdByRole: 'manager',
+        landlordId: landlordProfile.id,
+        managerId: user.id,
+        landlordName: formData.landlordName.trim() || landlordProfile.full_name,
+        managerName: user.name,
+      };
+    } else {
+      let managerId: string | undefined;
+      if (formData.propertyManagerEmail.trim()) {
+        const managerProfile = await findProfileByEmailAndRole(formData.propertyManagerEmail.trim(), 'manager');
+        if (managerProfile) {
+          managerId = managerProfile.id;
+        } else {
+          // Not registered — inform the landlord, but they can still create
+          // the property under themselves only (no fake/wrong manager link).
+          await new Promise<void>((resolve) => {
+            Alert.alert(
+              'Property Manager Not Registered',
+              'The property manager you added is not registered in the system. Please ask the property manager to register first.',
+              [{ text: 'OK', onPress: () => resolve() }]
+            );
+          });
+        }
+      }
+      linkInfo = {
+        createdByRole: 'landlord',
+        landlordId: user.id,
+        managerId,
+        landlordName: formData.landlordName.trim() || undefined,
+        managerName: formData.propertyManagerName.trim() || undefined,
+      };
+    }
+
     setIsSubmitting(true);
-    
+
     try {
       // Upload images to Supabase Storage if any
       let uploadedPhotoUrls: string[] = [];
@@ -234,8 +308,8 @@ export default function AddPropertyScreen() {
         ? manualAddress.unit 
         : (formData.address2 || structuredAddress.unit);
 
-      // Pass the user ID to save to Supabase
-      const savedPropertyId = await addProperty({
+      // Pass the user ID + resolved landlord/manager link to save to Supabase
+      const saved = await addProperty({
         // Use structured address fields (from autocomplete or manual)
         address1: fullStreetAddress,
         address2: unitValue || undefined,
@@ -255,17 +329,21 @@ export default function AddPropertyScreen() {
           ? parseFloat(formData.rentAmount)
           : undefined,
         utilities: formData.utilities,
-      }, user?.id);
+      }, user.id, linkInfo);
 
       // Always navigate to the newly added property page with a success message.
-      // For multi-unit, this lets the landlord immediately add units.
+      // For multi-unit, this lets the landlord immediately add units. If the
+      // same real property already existed for this landlord, the user was
+      // linked to it instead of creating a duplicate — say so.
       Alert.alert(
-        'Property Added',
-        'Your property has been successfully added.',
+        saved.wasExisting ? 'Linked to Existing Property' : 'Property Added',
+        saved.wasExisting
+          ? 'This property already existed — you have been linked to it instead of creating a duplicate.'
+          : 'Your property has been successfully added.',
         [
           {
             text: 'View Property',
-            onPress: () => router.replace(`/property-detail?id=${savedPropertyId}` as any),
+            onPress: () => router.replace(`/property-detail?id=${saved.id}` as any),
           },
         ],
         { cancelable: false }
@@ -511,21 +589,94 @@ export default function AddPropertyScreen() {
             </View>
           </View>
 
-          {/* Landlord Name */}
-          <View style={styles.section}>
-            <View style={styles.inputGroup}>
-              <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
-                Landlord Name (Optional)
+          {/* Landlord / Property Manager linking — which section shows is
+              decided entirely by the current user's existing role, never
+              asked of the user. */}
+          {isManager ? (
+            <View style={styles.section}>
+              <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+                Landlord Details (Required)
               </ThemedText>
-              <TextInput
-                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
-                placeholder="Enter landlord name"
-                placeholderTextColor={secondaryTextColor}
-                value={formData.landlordName}
-                onChangeText={(text) => setFormData(prev => ({ ...prev, landlordName: text }))}
-              />
+              <ThemedText style={[styles.label, { color: secondaryTextColor, marginBottom: 12 }]}>
+                You're adding this property on behalf of a landlord. They must already be registered.
+              </ThemedText>
+              <View style={styles.inputGroup}>
+                <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                  Landlord Name
+                </ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                  placeholder="Enter landlord name"
+                  placeholderTextColor={secondaryTextColor}
+                  value={formData.landlordName}
+                  onChangeText={(text) => setFormData(prev => ({ ...prev, landlordName: text }))}
+                />
+              </View>
+              <View style={styles.inputGroup}>
+                <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                  Landlord Email
+                </ThemedText>
+                <TextInput
+                  style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                  placeholder="Enter landlord email"
+                  placeholderTextColor={secondaryTextColor}
+                  value={formData.landlordEmail}
+                  onChangeText={(text) => setFormData(prev => ({ ...prev, landlordEmail: text }))}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+              </View>
             </View>
-          </View>
+          ) : (
+            <>
+              <View style={styles.section}>
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    Landlord Name (Optional)
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="Enter landlord name"
+                    placeholderTextColor={secondaryTextColor}
+                    value={formData.landlordName}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, landlordName: text }))}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.section}>
+                <ThemedText style={[styles.sectionTitle, { color: textColor }]}>
+                  Property Manager (Optional)
+                </ThemedText>
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    Property Manager Name
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="Enter property manager name"
+                    placeholderTextColor={secondaryTextColor}
+                    value={formData.propertyManagerName}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, propertyManagerName: text }))}
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <ThemedText style={[styles.label, { color: secondaryTextColor }]}>
+                    Property Manager Email
+                  </ThemedText>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                    placeholder="Enter property manager email"
+                    placeholderTextColor={secondaryTextColor}
+                    value={formData.propertyManagerEmail}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, propertyManagerEmail: text }))}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+            </>
+          )}
 
           {/* Rent Complete Property (Only for non-multi-unit) */}
           {!isMultiUnit && (

@@ -192,7 +192,23 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
       return null;
     }
 
-    return data;
+    if (data) return data;
+
+    // The signup trigger (handle_new_user) that's supposed to create this
+    // row swallows its own errors, so it can occasionally strand an
+    // account with no profile row at all. Self-heal on demand — but only
+    // for the CURRENTLY authenticated user (the RPC checks auth.uid()
+    // itself), never for an arbitrary userId someone else passed in.
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.user?.id !== userId) {
+      return null;
+    }
+    const { data: healed, error: healError } = await supabase.rpc('ensure_profile_exists');
+    if (healError) {
+      console.error('Error self-healing missing profile:', healError);
+      return null;
+    }
+    return healed ?? null;
   } catch (error) {
     console.error('Error fetching user profile:', error);
     return null;
@@ -464,6 +480,7 @@ export interface DbProperty {
   country: string;
   property_type: 'single_unit' | 'multi_unit' | 'commercial' | 'parking';
   landlord_name?: string;
+  property_manager_name?: string;
   rent_complete_property?: boolean;
   description?: string;
   photos?: string[];
@@ -477,6 +494,22 @@ export interface DbProperty {
     rentalEquipments: 'landlord' | 'tenant';
   };
   status: 'active' | 'inactive';
+  // Who actually owns / actually created the row — the owner (landlord)
+  // never changes even when a manager creates the property on their behalf.
+  created_by_user_id?: string;
+  created_by_role?: 'landlord' | 'manager';
+  created_at: string;
+  updated_at: string;
+}
+
+// Links a landlord and a property manager to the SAME property row.
+export interface PropertyCollaborator {
+  id: string;
+  property_id: string;
+  landlord_id: string;
+  manager_id: string;
+  status: 'active' | 'removed';
+  created_by?: string;
   created_at: string;
   updated_at: string;
 }
@@ -520,25 +553,57 @@ export interface DbSubUnit {
   updated_at: string;
 }
 
-// Fetch all properties for the current user
+// Fetch all properties for the current user — properties they own (landlord)
+// PLUS any properties they're linked to as an active property manager.
+// A property always has one owner (user_id, the landlord); manager access
+// comes entirely through property_collaborators, never a second row.
 export async function fetchProperties(userId: string): Promise<DbProperty[]> {
   try {
-    const { data, error } = await supabase
-      .from('properties')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    const [ownedResult, linkedLinksResult] = await Promise.all([
+      supabase
+        .from('properties')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('property_collaborators')
+        .select('property_id')
+        .eq('manager_id', userId)
+        .eq('status', 'active'),
+    ]);
 
-    if (error) {
-      if (error.code === 'PGRST205') {
+    if (ownedResult.error) {
+      if (ownedResult.error.code === 'PGRST205') {
         console.warn('⚠️ properties table not found. Using local data.');
         return [];
       }
-      console.error('Error fetching properties:', error);
+      console.error('Error fetching properties:', ownedResult.error);
       return [];
     }
 
-    return data || [];
+    const owned = ownedResult.data || [];
+    const linkedIds = (linkedLinksResult.data || []).map((l) => l.property_id);
+
+    let linked: DbProperty[] = [];
+    if (linkedIds.length > 0) {
+      const { data: linkedData, error: linkedError } = await supabase
+        .from('properties')
+        .select('*')
+        .in('id', linkedIds);
+      if (linkedError) {
+        console.error('Error fetching linked properties:', linkedError);
+      } else {
+        linked = linkedData || [];
+      }
+    }
+
+    // Merge, de-dupe by id (a user could theoretically own AND be linked —
+    // shouldn't happen, but keep it safe), most-recent first.
+    const merged = new Map<string, DbProperty>();
+    for (const p of [...owned, ...linked]) merged.set(p.id, p);
+    return Array.from(merged.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
   } catch (error) {
     console.error('Error fetching properties:', error);
     return [];
@@ -654,6 +719,237 @@ export async function createProperty(property: Omit<DbProperty, 'id' | 'created_
     console.error('Error creating property:', error);
     return null;
   }
+}
+
+// ─── Landlord <-> Property Manager linking ────────────────────────────────
+
+// Look up a profile by email AND role together — never email alone, since
+// the same email may exist under both a landlord and a manager profile.
+export async function findProfileByEmailAndRole(
+  email: string,
+  role: 'landlord' | 'manager'
+): Promise<{ id: string; full_name: string; email: string; user_type: string } | null> {
+  try {
+    const { data, error } = await supabase.rpc('find_profile_by_email_and_role', {
+      p_email: email,
+      p_role: role,
+    });
+    if (error) {
+      console.error('findProfileByEmailAndRole error:', error);
+      return null;
+    }
+    return data && data.length > 0 ? data[0] : null;
+  } catch (error) {
+    console.error('findProfileByEmailAndRole error:', error);
+    return null;
+  }
+}
+
+export interface CreatePropertyWithLinkParams {
+  createdBy: string;
+  createdByRole: 'landlord' | 'manager';
+  landlordId: string;
+  managerId?: string;
+  landlordName?: string;
+  managerName?: string;
+  name?: string;
+  address1: string;
+  address2?: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  country: string;
+  propertyType: 'single_unit' | 'multi_unit' | 'commercial' | 'parking';
+  rentCompleteProperty?: boolean;
+  description?: string;
+  photos?: string[];
+  parkingIncluded?: boolean;
+  rentAmount?: number;
+  utilities?: DbProperty['utilities'];
+}
+
+// Single entry point for both creation paths (landlord, optionally linking
+// a manager; or manager, required to link a registered landlord). Always
+// stores the property under the landlord's user_id and links via
+// property_collaborators — never a second copy of the same property.
+export async function createPropertyWithLink(
+  params: CreatePropertyWithLinkParams
+): Promise<{ propertyId: string; wasExisting: boolean } | null> {
+  try {
+    const { data, error } = await supabase.rpc('create_property_with_link', {
+      p_created_by: params.createdBy,
+      p_created_by_role: params.createdByRole,
+      p_landlord_id: params.landlordId,
+      p_manager_id: params.managerId ?? null,
+      p_landlord_name: params.landlordName ?? null,
+      p_manager_name: params.managerName ?? null,
+      p_name: params.name ?? null,
+      p_address1: params.address1,
+      p_address2: params.address2 ?? null,
+      p_city: params.city,
+      p_state: params.state,
+      p_zip_code: params.zipCode,
+      p_country: params.country,
+      p_property_type: params.propertyType,
+      p_rent_complete_property: params.rentCompleteProperty ?? null,
+      p_description: params.description ?? null,
+      p_photos: params.photos ?? null,
+      p_parking_included: params.parkingIncluded ?? null,
+      p_rent_amount: params.rentAmount ?? null,
+      p_utilities: params.utilities ?? null,
+    });
+
+    if (error) {
+      console.error('createPropertyWithLink error:', error.message, error.details, error.hint, error.code);
+      return null;
+    }
+
+    if (data?.property_id) {
+      logActivity({
+        userId: params.landlordId,
+        type: 'property_added',
+        title: 'Property Added',
+        message: `${params.name || params.address1 || 'A new property'} was added to your portfolio`,
+        data: { propertyId: data.property_id },
+      });
+    }
+
+    return data ? { propertyId: data.property_id, wasExisting: !!data.was_existing } : null;
+  } catch (error) {
+    console.error('createPropertyWithLink error:', error);
+    return null;
+  }
+}
+
+// Landlord/manager display info for a property (name + email of each
+// side), scoped server-side to callers actually linked to the property.
+// Single source of truth for the Property Detail screen's role-based
+// landlord/manager info — never derived from raw free-text fields alone.
+export interface PropertyLandlordManagerInfo {
+  landlordId: string | null;
+  landlordName: string | null;
+  landlordEmail: string | null;
+  managerId: string | null;
+  managerName: string | null;
+  managerEmail: string | null;
+}
+
+export async function getPropertyLandlordManagerInfo(
+  propertyId: string
+): Promise<PropertyLandlordManagerInfo | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_property_landlord_manager_info', {
+      p_property_id: propertyId,
+    });
+    if (error) {
+      console.error('getPropertyLandlordManagerInfo error:', error.message, error.details, error.hint, error.code);
+      return null;
+    }
+    if (!data) return null;
+    return {
+      landlordId: data.landlord_id ?? null,
+      landlordName: data.landlord_name ?? null,
+      landlordEmail: data.landlord_email ?? null,
+      managerId: data.manager_id ?? null,
+      managerName: data.manager_name ?? null,
+      managerEmail: data.manager_email ?? null,
+    };
+  } catch (error) {
+    console.error('getPropertyLandlordManagerInfo error:', error);
+    return null;
+  }
+}
+
+// Fetch the property_collaborators row (if any) that connects this user to
+// this property — used to tell an owning landlord apart from a linked
+// manager (e.g. to branch delete behavior / dialog copy).
+export async function fetchPropertyCollaborator(
+  propertyId: string,
+  userId: string
+): Promise<PropertyCollaborator | null> {
+  try {
+    const { data, error } = await supabase
+      .from('property_collaborators')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('status', 'active')
+      .or(`landlord_id.eq.${userId},manager_id.eq.${userId}`)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching property collaborator:', error);
+      return null;
+    }
+    return data;
+  } catch (error) {
+    console.error('Error fetching property collaborator:', error);
+    return null;
+  }
+}
+
+// Fetch all active collaborator links for a property (for display, e.g.
+// showing the linked manager's name on the property detail screen).
+export async function fetchPropertyCollaborators(propertyId: string): Promise<PropertyCollaborator[]> {
+  try {
+    const { data, error } = await supabase
+      .from('property_collaborators')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('status', 'active');
+    if (error) {
+      console.error('Error fetching property collaborators:', error);
+      return [];
+    }
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching property collaborators:', error);
+    return [];
+  }
+}
+
+// Removes a manager's link to a property. Either the manager themself
+// (the property-manager "delete" path — removes only their own link, the
+// property/units/tenants/leases and the landlord's access are completely
+// untouched) or the property's own landlord (removing/replacing their
+// property manager from Edit Property) may call this — deletedBy defaults
+// to managerId for the self-unlink case, pass the landlord's id explicitly
+// when the landlord initiates it.
+export async function unlinkPropertyCollaborator(
+  propertyId: string,
+  managerId: string,
+  deletedBy?: string
+): Promise<ArchiveDeleteResult> {
+  const { error } = await supabase.rpc('archive_and_unlink_property_collaborator', {
+    p_property_id: propertyId,
+    p_manager_id: managerId,
+    p_deleted_by: deletedBy ?? managerId,
+  });
+  if (error) {
+    console.error('archive_and_unlink_property_collaborator error:', error);
+    return { deleted: false, error: error.message };
+  }
+  return { deleted: true };
+}
+
+// Links (or re-links) a property manager to a property the caller
+// actually owns — the Edit Property "add/change property manager" path.
+// Only one active manager per property is supported (matching the
+// Property Detail UI); linking a new one cleanly replaces any other
+// active link on this property.
+export async function linkPropertyManager(
+  propertyId: string,
+  managerId: string,
+  managerName?: string
+): Promise<{ success: boolean; error?: string }> {
+  const { error } = await supabase.rpc('link_property_manager', {
+    p_property_id: propertyId,
+    p_manager_id: managerId,
+    p_manager_name: managerName ?? null,
+  });
+  if (error) {
+    console.error('link_property_manager error:', error.message, error.details, error.hint, error.code);
+    return { success: false, error: error.message };
+  }
+  return { success: true };
 }
 
 // Update a property

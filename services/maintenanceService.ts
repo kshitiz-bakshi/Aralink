@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { fetchProperties, supabase } from '@/lib/supabase';
 import { triggerPushNotification } from '@/lib/sendPushNotification';
 import {
   MaintenanceCreatorRole,
@@ -266,8 +266,18 @@ export async function fetchMaintenanceRequests(
     if (userType === 'tenant') {
       query = query.eq('tenant_id', userId);
     } else {
-      // landlord and manager both filter by landlord_id
-      query = query.eq('landlord_id', userId);
+      // Landlord and manager both see every request tied to a property
+      // they can actually access (owned, or linked via
+      // property_collaborators) — not just rows whose stored landlord_id
+      // happens to equal them. This also correctly surfaces requests a
+      // linked manager created on the landlord's behalf, and vice versa,
+      // without needing to backfill old rows' landlord_id.
+      const accessibleProperties = await fetchProperties(userId);
+      const propertyIds = accessibleProperties.map((p) => p.id);
+      if (propertyIds.length === 0) {
+        return { data: [], error: null };
+      }
+      query = query.in('property_id', propertyIds);
     }
 
     const { data, error } = await query.order('created_at', { ascending: false });

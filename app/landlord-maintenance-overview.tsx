@@ -65,14 +65,14 @@ export default function LandlordMaintenanceOverviewScreen() {
   // Fetch requests on focus
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) fetchRequests(user.id, 'landlord');
+      if (user?.id) fetchRequests(user.id, user.role === 'manager' ? 'manager' : 'landlord');
     }, [user?.id])
   );
 
   const handleRefresh = async () => {
     if (user?.id) {
       setRefreshing(true);
-      await fetchRequests(user.id, 'landlord');
+      await fetchRequests(user.id, user.role === 'manager' ? 'manager' : 'landlord');
       setRefreshing(false);
     }
   };

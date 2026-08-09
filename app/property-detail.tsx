@@ -15,6 +15,7 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
@@ -24,7 +25,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { DeleteConfirmDialog } from '@/components/delete-confirm-dialog';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { checkEntityHasTenant, createLease, DbLease, DbTransaction, deleteImage, fetchLeasesByProperty, fetchTransactionsByProperty, replaceLeaseDocument, STORAGE_BUCKETS, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
+import { checkEntityHasTenant, createLease, DbLease, DbTransaction, deleteImage, fetchLeasesByProperty, fetchTransactionsByProperty, findProfileByEmailAndRole, getPropertyLandlordManagerInfo, linkPropertyManager, PropertyLandlordManagerInfo, replaceLeaseDocument, STORAGE_BUCKETS, unlinkPropertyCollaborator, updateLeaseInDb, uploadLeaseDocument, uploadMultipleImages } from '@/lib/supabase';
 import { getFullAddressWithUnit } from '@/lib/addressUtils';
 import { useTenantStore } from '@/store/tenantStore';
 import { useAuthStore } from '@/store/authStore';
@@ -62,6 +63,14 @@ export default function PropertyDetailScreen() {
   const [selectedRoomUnitId, setSelectedRoomUnitId] = useState<string | undefined>(undefined);
   const [propertyLeases, setPropertyLeases] = useState<DbLease[]>([]);
   const [propertyTransactions, setPropertyTransactions] = useState<DbTransaction[]>([]);
+  const [landlordManagerInfo, setLandlordManagerInfo] = useState<PropertyLandlordManagerInfo | null>(null);
+  // Landlord's Edit Property draft for adding/changing the linked
+  // property manager — kept separate from landlordManagerInfo so typing
+  // doesn't clobber the currently-saved values until Save is tapped.
+  const [managerEditName, setManagerEditName] = useState('');
+  const [managerEditEmail, setManagerEditEmail] = useState('');
+  const [isSavingManagerLink, setIsSavingManagerLink] = useState(false);
+  const [isRemovingManagerLink, setIsRemovingManagerLink] = useState(false);
   const [isUpdatingPhotos, setIsUpdatingPhotos] = useState(false);
   const [isUploadingLease, setIsUploadingLease] = useState(false);
 
@@ -75,6 +84,7 @@ export default function PropertyDetailScreen() {
     tenantName: string | null;
     tenantCount: number;
     isLoading: boolean;
+    isManagerUnlink: boolean;
   }>({
     visible: false,
     entityType: 'property',
@@ -84,6 +94,7 @@ export default function PropertyDetailScreen() {
     tenantName: null,
     tenantCount: 0,
     isLoading: false,
+    isManagerUnlink: false,
   });
   const scrollViewRef = useRef<ScrollView>(null);
   const imageScrollRef = useRef<FlatList>(null);
@@ -123,6 +134,11 @@ export default function PropertyDetailScreen() {
       // logged from either screen shows up here too).
       const txns = await fetchTransactionsByProperty(id);
       setPropertyTransactions(txns);
+
+      // Landlord/property manager display info — resolved server-side from
+      // the actual linked records, not just the raw free-text fields.
+      const linkInfo = await getPropertyLandlordManagerInfo(id);
+      setLandlordManagerInfo(linkInfo);
     } catch (error) {
       console.error('Error loading property:', error);
     } finally {
@@ -133,6 +149,13 @@ export default function PropertyDetailScreen() {
   useEffect(() => {
     loadProperty();
   }, [loadProperty]);
+
+  // Keep the Edit Property manager-link draft fields in sync with the
+  // actual saved values whenever they (re)load.
+  useEffect(() => {
+    setManagerEditName(landlordManagerInfo?.managerName || '');
+    setManagerEditEmail(landlordManagerInfo?.managerEmail || '');
+  }, [landlordManagerInfo]);
 
   // Keep selectedUnit in sync whenever the property refreshes (e.g. after adding a room)
   useEffect(() => {
@@ -158,7 +181,8 @@ export default function PropertyDetailScreen() {
   const openDeleteDialog = async (
     entityType: 'property' | 'unit' | 'subunit',
     entityId: string,
-    entityName: string
+    entityName: string,
+    isManagerUnlink: boolean = false
   ) => {
     const check = await checkEntityHasTenant(entityType, entityId);
     setDeleteDialog({
@@ -170,12 +194,17 @@ export default function PropertyDetailScreen() {
       tenantName: check.tenantName,
       tenantCount: check.tenantCount,
       isLoading: false,
+      isManagerUnlink,
     });
   };
 
   const handleDeleteProperty = () => {
     if (!property) return;
-    openDeleteDialog('property', property.id, property.address1 || 'this property');
+    // Only the owning landlord permanently deletes the property record.
+    // A linked property manager (property.userId is the landlord, not
+    // them) only ever removes their own link to it.
+    const isManagerUnlink = !!property.userId && property.userId !== user?.id;
+    openDeleteDialog('property', property.id, property.address1 || 'this property', isManagerUnlink);
   };
 
   const handleDeleteUnit = (unit: Unit) => {
@@ -238,6 +267,78 @@ export default function PropertyDetailScreen() {
     }
     // Multiple tenants — show the tenant list scoped to this property only
     router.push(`/tenants?propertyId=${property.id}` as any);
+  };
+
+  const handleLinkManager = async () => {
+    if (!property || !user?.id) return;
+    const email = managerEditEmail.trim();
+    if (!email) {
+      Alert.alert('Error', 'Please enter the property manager email.');
+      return;
+    }
+    setIsSavingManagerLink(true);
+    try {
+      const managerProfile = await findProfileByEmailAndRole(email, 'manager');
+      if (!managerProfile) {
+        Alert.alert(
+          'Property Manager Not Registered',
+          'The property manager you added is not registered in the system. Please ask the property manager to register first.'
+        );
+        return;
+      }
+      const result = await linkPropertyManager(
+        property.id,
+        managerProfile.id,
+        managerEditName.trim() || managerProfile.full_name
+      );
+      if (!result.success) {
+        Alert.alert('Error', 'Failed to link the property manager. Please try again.');
+        return;
+      }
+      const refreshed = await getPropertyLandlordManagerInfo(property.id);
+      setLandlordManagerInfo(refreshed);
+      refreshProperty();
+      Alert.alert('Saved', 'Property manager linked to this property.');
+    } catch (error) {
+      console.error('Error linking property manager:', error);
+      Alert.alert('Error', 'Failed to link the property manager. Please try again.');
+    } finally {
+      setIsSavingManagerLink(false);
+    }
+  };
+
+  const handleRemoveManager = async () => {
+    if (!property || !user?.id || !landlordManagerInfo?.managerId) return;
+    Alert.alert(
+      'Remove Property Manager',
+      'This removes the property manager\'s access to this property. You can link a new one anytime.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setIsRemovingManagerLink(true);
+            try {
+              const result = await unlinkPropertyCollaborator(property.id, landlordManagerInfo.managerId!, user.id);
+              if (!result.deleted) {
+                Alert.alert('Error', result.error || 'Failed to remove the property manager.');
+                return;
+              }
+              const refreshed = await getPropertyLandlordManagerInfo(property.id);
+              setLandlordManagerInfo(refreshed);
+              setManagerEditName('');
+              setManagerEditEmail('');
+            } catch (error) {
+              console.error('Error removing property manager:', error);
+              Alert.alert('Error', 'Failed to remove the property manager.');
+            } finally {
+              setIsRemovingManagerLink(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleUpdateProperty = (updates: Partial<Property>) => {
@@ -578,6 +679,17 @@ export default function PropertyDetailScreen() {
     router.push(`/add-room?propertyId=${property?.id}&unitId=${unitId}`);
   };
 
+  // Landlord/property manager display info — role-based per the current
+  // logged-in user, sourced from the actual linked records (never assumed).
+  // Applies to the whole property (and therefore every unit under it, since
+  // units don't carry their own separate landlord/manager relationship).
+  const isViewerManager = user?.role === 'manager';
+  const displayLandlordName = landlordManagerInfo?.landlordName || property?.landlordName || null;
+  const displayLandlordEmail = landlordManagerInfo?.landlordEmail || null;
+  const displayManagerName = landlordManagerInfo?.managerName || property?.propertyManagerName || null;
+  const displayManagerEmail = landlordManagerInfo?.managerEmail || null;
+  const hasLinkedManager = !!landlordManagerInfo?.managerId;
+
   if (isLoading || !property) {
   return (
     <ThemedView style={[styles.container, { backgroundColor: bgColor }]}>
@@ -789,12 +901,6 @@ export default function PropertyDetailScreen() {
 
         {/* Landlord and Address Info */}
         <View style={[styles.infoSection, { borderBottomColor: borderColor }]}>
-          {property.landlordName && (
-            <View style={styles.infoRow}>
-              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Landlord</ThemedText>
-              <ThemedText style={[styles.infoValue, { color: textColor }]}>{property.landlordName}</ThemedText>
-            </View>
-          )}
           <View style={styles.infoRow}>
             <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Address</ThemedText>
             <ThemedText style={[styles.infoValue, { color: textColor }]}>
@@ -802,6 +908,106 @@ export default function PropertyDetailScreen() {
               {property.address2 ? `, ${property.address2}` : ''}, {property.city}, {property.state} {property.zipCode}
             </ThemedText>
           </View>
+
+          <View style={styles.infoRow}>
+            <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Landlord</ThemedText>
+            <ThemedText style={[styles.infoValue, { color: textColor }]}>
+              {displayLandlordName || 'Landlord information unavailable'}
+            </ThemedText>
+          </View>
+
+          {isViewerManager && (
+            // Property manager viewing: show the landlord's email too, and
+            // their own name — never their own email back to themselves.
+            <>
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Landlord Email</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>
+                  {displayLandlordEmail || 'Not available'}
+                </ThemedText>
+              </View>
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Manager</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>
+                  {displayManagerName || user?.name || 'You'}
+                </ThemedText>
+              </View>
+            </>
+          )}
+
+          {!isViewerManager && !isEditMode && (
+            // Landlord viewing (read-only): show the linked property manager, if any.
+            <>
+              <View style={styles.infoRow}>
+                <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Manager</ThemedText>
+                <ThemedText style={[styles.infoValue, { color: textColor }]}>
+                  {hasLinkedManager ? (displayManagerName || 'Unnamed') : 'No property manager assigned'}
+                </ThemedText>
+              </View>
+              {hasLinkedManager && (
+                <View style={styles.infoRow}>
+                  <ThemedText style={[styles.infoLabel, { color: secondaryTextColor }]}>Property Manager Email</ThemedText>
+                  <ThemedText style={[styles.infoValue, { color: textColor }]}>
+                    {displayManagerEmail || 'Not available'}
+                  </ThemedText>
+                </View>
+              )}
+            </>
+          )}
+
+          {!isViewerManager && isEditMode && (
+            // Landlord editing: add, change, or remove the linked property manager.
+            <View style={styles.managerEditBlock}>
+              <ThemedText style={[styles.infoLabel, { color: secondaryTextColor, marginBottom: 8 }]}>
+                Property Manager (Optional)
+              </ThemedText>
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor }]}
+                placeholder="Property manager name"
+                placeholderTextColor={secondaryTextColor}
+                value={managerEditName}
+                onChangeText={setManagerEditName}
+              />
+              <TextInput
+                style={[styles.input, { backgroundColor: inputBgColor, borderColor, color: textColor, marginTop: 8 }]}
+                placeholder="Property manager email"
+                placeholderTextColor={secondaryTextColor}
+                value={managerEditEmail}
+                onChangeText={setManagerEditEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <View style={styles.managerEditButtonRow}>
+                <TouchableOpacity
+                  style={[styles.managerEditButton, { backgroundColor: primaryColor, opacity: isSavingManagerLink ? 0.7 : 1 }]}
+                  onPress={handleLinkManager}
+                  disabled={isSavingManagerLink || isRemovingManagerLink}
+                >
+                  {isSavingManagerLink ? (
+                    <ActivityIndicator size="small" color={onPrimaryColor} />
+                  ) : (
+                    <ThemedText style={[styles.managerEditButtonText, { color: onPrimaryColor }]}>
+                      {hasLinkedManager ? 'Update' : 'Link Manager'}
+                    </ThemedText>
+                  )}
+                </TouchableOpacity>
+                {hasLinkedManager && (
+                  <TouchableOpacity
+                    style={[styles.managerEditButton, { backgroundColor: isDark ? '#26282C' : '#E5E5E7' }]}
+                    onPress={handleRemoveManager}
+                    disabled={isSavingManagerLink || isRemovingManagerLink}
+                  >
+                    {isRemovingManagerLink ? (
+                      <ActivityIndicator size="small" color="#ef4444" />
+                    ) : (
+                      <ThemedText style={[styles.managerEditButtonText, { color: '#ef4444' }]}>Remove</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
+
           </View>
 
         {/* Rental Setup */}
@@ -1589,6 +1795,7 @@ export default function PropertyDetailScreen() {
         tenantName={deleteDialog.tenantName}
         tenantCount={deleteDialog.tenantCount}
         isLoading={deleteDialog.isLoading}
+        isManagerUnlink={deleteDialog.isManagerUnlink}
         onCancel={() => setDeleteDialog((d) => ({ ...d, visible: false }))}
         onConfirm={handleConfirmDelete}
       />
@@ -1765,6 +1972,32 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   infoValue: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  managerEditBlock: {
+    gap: 4,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+  },
+  managerEditButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  managerEditButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  managerEditButtonText: {
     fontSize: 14,
     fontWeight: '600',
   },
